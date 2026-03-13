@@ -1,8 +1,23 @@
+import sys
 from auth import get_gmail_service, get_calendar_service
 from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply
 from llm import summarize_email, refine_draft, generate_auto_reply, parse_meeting_request
 from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
 from config import USER_NAME
+
+MENU = """
++---------------------------------------+
+|     Gmail & Calendar Assistant        |
++---------------------------------------+
+|  1. Summarize Unread Emails           |
+|  2. Search & Read Emails              |
+|  3. Compose Email (AI-Assisted)       |
+|  4. Auto-Reply to Email               |
+|  5. View Calendar                     |
+|  6. Schedule Meeting                  |
+|  0. Exit                              |
++---------------------------------------+
+"""
 
 
 def _format_event(event):
@@ -11,7 +26,6 @@ def _format_event(event):
     end = event.get("end", {})
     start_str = start.get("dateTime", start.get("date", ""))
     end_str = end.get("dateTime", end.get("date", ""))
-    # Clean up datetime display
     if "T" in start_str:
         start_str = start_str.replace("T", " ")[:16]
     if "T" in end_str:
@@ -29,10 +43,10 @@ def option_summarize_unread():
     emails = fetch_unread_emails(max_results)
 
     if not emails:
-        print("No unread emails found.")
+        print("No unread emails found.\n")
         return
 
-    print(f"\nFound {len(emails)} unread email(s). Analyzing...\n")
+    print(f"Found {len(emails)} unread email(s). Analyzing...\n")
 
     all_deadlines = []
 
@@ -57,9 +71,8 @@ def option_summarize_unread():
 
         print()
 
-    # Offer to create calendar events from extracted deadlines
     if all_deadlines:
-        print(f"\nFound {len(all_deadlines)} deadline(s) across emails:")
+        print(f"Found {len(all_deadlines)} deadline(s) across emails:")
         for i, (subj, deadline) in enumerate(all_deadlines, 1):
             print(f"  [{i}] {deadline} (from: {subj})")
 
@@ -78,7 +91,7 @@ def option_search_and_read():
     """Option 2: Search and read emails."""
     query = input("Enter Gmail search query (e.g., from:someone subject:project): ").strip()
     if not query:
-        print("No query entered.")
+        print("No query entered.\n")
         return
 
     count = input("Max results? [10]: ").strip()
@@ -88,7 +101,7 @@ def option_search_and_read():
     emails = search_emails(query, max_results)
 
     if not emails:
-        print("No emails found matching your query.")
+        print("No emails found matching your query.\n")
         return
 
     print(f"\nFound {len(emails)} email(s):\n")
@@ -110,19 +123,19 @@ def option_search_and_read():
             print(email["body"])
             print(f"{'='*60}\n")
         else:
-            print("Invalid selection.")
+            print("Invalid selection.\n")
 
 
 def option_compose_email():
     """Option 3: Compose an email with AI assistance."""
     to = input("Recipient email address: ").strip()
     if not to:
-        print("No recipient entered.")
+        print("No recipient entered.\n")
         return
 
     subject = input("Subject: ").strip()
     if not subject:
-        print("No subject entered.")
+        print("No subject entered.\n")
         return
 
     print("Enter your rough draft (type END on a new line to finish):")
@@ -135,7 +148,7 @@ def option_compose_email():
     rough_text = "\n".join(lines)
 
     if not rough_text.strip():
-        print("Empty draft. Aborting.")
+        print("Empty draft. Aborting.\n")
         return
 
     print("\nRefining your draft with AI...")
@@ -165,7 +178,7 @@ def option_auto_reply():
     emails = fetch_unread_emails(max_results)
 
     if not emails:
-        print("No unread emails found.")
+        print("No unread emails found.\n")
         return
 
     print(f"\nFound {len(emails)} unread email(s):\n")
@@ -179,7 +192,7 @@ def option_auto_reply():
 
     idx = int(choice) - 1
     if idx < 0 or idx >= len(emails):
-        print("Invalid selection.")
+        print("Invalid selection.\n")
         return
 
     email = emails[idx]
@@ -195,7 +208,6 @@ def option_auto_reply():
 
     confirm = input("Send this reply? (Y/N): ").strip().upper()
     if confirm == "Y":
-        # Extract sender email address
         sender = email["from"]
         if "<" in sender:
             sender = sender.split("<")[1].rstrip(">")
@@ -221,7 +233,7 @@ def option_view_calendar():
         print("\nThis Week's Events:")
         events = get_weeks_events()
     else:
-        print("Invalid choice.")
+        print("Invalid choice.\n")
         return
 
     if not events:
@@ -237,14 +249,14 @@ def option_schedule_meeting():
     print("Describe the meeting (e.g., 'Sync with John next Tuesday at 2 PM'):")
     request = input("> ").strip()
     if not request:
-        print("No input provided.")
+        print("No input provided.\n")
         return
 
     print("\nParsing your request...")
     parsed = parse_meeting_request(request)
 
     if not parsed or not parsed.get("start"):
-        print("Could not parse the meeting request. Please try again with more detail.")
+        print("Could not parse the meeting request. Please try again with more detail.\n")
         return
 
     print(f"\n  Title:     {parsed['summary']}")
@@ -279,41 +291,44 @@ def option_schedule_meeting():
 
 def main():
     print("Authenticating with Google APIs...")
-    get_gmail_service()
-    get_calendar_service()
-    print("Authentication successful! Gmail and Calendar services ready.\n")
+    try:
+        get_gmail_service()
+        get_calendar_service()
+    except Exception as e:
+        print(f"Authentication failed: {e}")
+        sys.exit(1)
+    print("Authentication successful!\n")
+
+    options = {
+        "1": ("Summarize Unread Emails", option_summarize_unread),
+        "2": ("Search & Read Emails", option_search_and_read),
+        "3": ("Compose Email (AI-Assisted)", option_compose_email),
+        "4": ("Auto-Reply to Email", option_auto_reply),
+        "5": ("View Calendar", option_view_calendar),
+        "6": ("Schedule Meeting", option_schedule_meeting),
+    }
 
     while True:
-        print("=== Gmail & Calendar Assistant ===")
-        print("  1. Summarize Unread Emails")
-        print("  2. Search & Read Emails")
-        print("  3. Compose Email (AI-Assisted)")
-        print("  4. Auto-Reply to Email")
-        print("  5. View Calendar")
-        print("  6. Schedule Meeting")
-        print("  0. Exit")
-        print()
-
+        print(MENU)
         choice = input("Select an option: ").strip()
 
-        if choice == "1":
-            option_summarize_unread()
-        elif choice == "2":
-            option_search_and_read()
-        elif choice == "3":
-            option_compose_email()
-        elif choice == "4":
-            option_auto_reply()
-        elif choice == "5":
-            option_view_calendar()
-        elif choice == "6":
-            option_schedule_meeting()
-        elif choice == "0":
+        if choice == "0":
             print("Goodbye!")
             break
+        elif choice in options:
+            try:
+                options[choice][1]()
+            except KeyboardInterrupt:
+                print("\n\nOperation cancelled.\n")
+            except Exception as e:
+                print(f"\nError: {e}\n")
         else:
             print("Invalid option. Please try again.\n")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nGoodbye!")
+        sys.exit(0)
