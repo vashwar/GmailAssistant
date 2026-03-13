@@ -1,4 +1,5 @@
 import base64
+import re
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 from auth import get_gmail_service
@@ -112,6 +113,54 @@ def get_email_by_id(msg_id):
         userId="me", id=msg_id, format="full"
     ).execute()
     return _parse_message(msg)
+
+
+def search_contacts(query, max_results=20):
+    """Search sent and received emails to find contacts matching a name or email.
+
+    Returns a deduplicated list of dicts: [{"name": ..., "email": ...}, ...]
+    """
+    service = get_gmail_service()
+
+    # Search both sent and received emails for the query
+    results = service.users().messages().list(
+        userId="me", q=query, maxResults=max_results
+    ).execute()
+
+    messages = results.get("messages", [])
+    if not messages:
+        return []
+
+    seen_emails = set()
+    contacts = []
+
+    for msg_stub in messages:
+        msg = service.users().messages().get(
+            userId="me", id=msg_stub["id"], format="metadata",
+            metadataHeaders=["From", "To", "Cc"]
+        ).execute()
+
+        headers = msg.get("payload", {}).get("headers", [])
+        for h in headers:
+            if h["name"] in ("From", "To", "Cc"):
+                # Parse "Name <email>" or just "email" patterns
+                for addr in h["value"].split(","):
+                    addr = addr.strip()
+                    match = re.match(r'"?([^"<]*)"?\s*<([^>]+)>', addr)
+                    if match:
+                        name = match.group(1).strip().strip('"')
+                        email = match.group(2).strip().lower()
+                    elif "@" in addr:
+                        name = ""
+                        email = addr.strip().lower()
+                    else:
+                        continue
+
+                    if email not in seen_emails and query.lower() in (name + " " + email).lower():
+                        seen_emails.add(email)
+                        contacts.append({"name": name, "email": email})
+
+    return contacts
 
 
 def send_email(to, subject, body):

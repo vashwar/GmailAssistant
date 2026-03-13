@@ -1,6 +1,6 @@
 import sys
 from auth import get_gmail_service, get_calendar_service
-from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply
+from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply, search_contacts
 from llm import summarize_email, refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
 from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
 from config import USER_NAME
@@ -126,11 +126,48 @@ def option_search_and_read():
             print("Invalid selection.\n")
 
 
+def _pick_recipient():
+    """Prompt for a recipient — type an email or search contacts by name."""
+    print("Recipient — enter an email address or a name to search:")
+    query = input("> ").strip()
+    if not query:
+        return None
+
+    # If it looks like an email, use it directly
+    if "@" in query:
+        return query
+
+    # Otherwise, search contacts
+    print(f"\nSearching contacts for \"{query}\"...")
+    contacts = search_contacts(query)
+
+    if not contacts:
+        print("No contacts found. Enter the email address manually:")
+        manual = input("> ").strip()
+        return manual if manual else None
+
+    print(f"\nFound {len(contacts)} contact(s):\n")
+    for i, c in enumerate(contacts, 1):
+        display = f"{c['name']} <{c['email']}>" if c["name"] else c["email"]
+        print(f"  [{i}] {display}")
+
+    print()
+    choice = input("Select a contact (or type an email to use instead): ").strip()
+    if "@" in choice:
+        return choice
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(contacts):
+            return contacts[idx]["email"]
+    print("Invalid selection.")
+    return None
+
+
 def option_compose_email():
     """Option 3: Compose an email with AI assistance."""
-    to = input("Recipient email address: ").strip()
+    to = _pick_recipient()
     if not to:
-        print("No recipient entered.\n")
+        print("No recipient selected.\n")
         return
 
     subject = input("Subject: ").strip()
