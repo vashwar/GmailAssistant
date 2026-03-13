@@ -66,3 +66,44 @@ Return ONLY the JSON object, no other text."""
         "urgency": result.get("urgency", "low"),
         "deadlines": result.get("deadlines", []),
     }
+
+
+def refine_draft(rough_text, recipient, subject):
+    """Refine a rough draft into a professional email.
+
+    Returns the polished email body as a string.
+    """
+    prompt = f"""You are an email drafting assistant. Take the rough draft below and refine it
+into a professional, well-formatted email. Keep the original intent and key points.
+Adjust the tone to be professional yet friendly. Do not add a subject line.
+
+Recipient: {recipient}
+Subject: {subject}
+Rough draft:
+{rough_text}
+
+Return ONLY the refined email body text, ready to send. No extra commentary."""
+
+    response = _model.generate_content(prompt)
+    return response.text.strip()
+
+
+def generate_auto_reply(sender, subject, body):
+    """Generate an appropriate auto-reply to an email.
+
+    Returns the reply body as a string.
+    """
+    truncated_body = body[:4000] if len(body) > 4000 else body
+
+    prompt = f"""You are an email assistant. Generate a brief, professional reply to this email.
+The reply should acknowledge the email and provide an appropriate response.
+
+From: {sender}
+Subject: {subject}
+Body:
+{truncated_body}
+
+Return ONLY the reply body text, ready to send. No extra commentary."""
+
+    response = _model.generate_content(prompt)
+    return response.text.strip()

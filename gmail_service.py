@@ -1,4 +1,5 @@
 import base64
+from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 from auth import get_gmail_service
 
@@ -111,3 +112,46 @@ def get_email_by_id(msg_id):
         userId="me", id=msg_id, format="full"
     ).execute()
     return _parse_message(msg)
+
+
+def send_email(to, subject, body):
+    """Compose and send a new email."""
+    service = get_gmail_service()
+    message = MIMEText(body)
+    message["to"] = to
+    message["subject"] = subject
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    sent = service.users().messages().send(
+        userId="me", body={"raw": raw}
+    ).execute()
+    return sent
+
+
+def send_reply(original_msg_id, to, subject, body, thread_id):
+    """Send a reply to an existing email thread."""
+    service = get_gmail_service()
+
+    # Fetch original message for In-Reply-To header
+    original = service.users().messages().get(
+        userId="me", id=original_msg_id, format="metadata",
+        metadataHeaders=["Message-ID"]
+    ).execute()
+    headers = original.get("payload", {}).get("headers", [])
+    original_message_id = ""
+    for h in headers:
+        if h["name"].lower() == "message-id":
+            original_message_id = h["value"]
+            break
+
+    message = MIMEText(body)
+    message["to"] = to
+    message["subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    if original_message_id:
+        message["In-Reply-To"] = original_message_id
+        message["References"] = original_message_id
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    sent = service.users().messages().send(
+        userId="me", body={"raw": raw, "threadId": thread_id}
+    ).execute()
+    return sent
