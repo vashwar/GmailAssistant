@@ -1,7 +1,7 @@
 import sys
 from auth import get_gmail_service, get_calendar_service
 from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply
-from llm import summarize_email, refine_draft, generate_auto_reply, parse_meeting_request
+from llm import summarize_email, refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
 from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
 from config import USER_NAME
 
@@ -166,21 +166,33 @@ def option_compose_email():
     refined_subject = refined["subject"]
     refined_body = refined["body"]
 
-    print(f"\n{'='*60}")
-    print(f"To:      {to}")
-    print(f"Subject: {refined_subject}")
-    if refined_subject != subject:
-        print(f"         (was: {subject})")
-    print(f"{'='*60}")
-    print(refined_body)
-    print(f"{'='*60}\n")
+    while True:
+        print(f"\n{'='*60}")
+        print(f"To:      {to}")
+        print(f"Subject: {refined_subject}")
+        if refined_subject != subject:
+            print(f"         (was: {subject})")
+        print(f"{'='*60}")
+        print(refined_body)
+        print(f"{'='*60}\n")
 
-    confirm = input("Send this email? (Y/N): ").strip().upper()
-    if confirm == "Y":
-        result = send_email(to, refined_subject, refined_body)
-        print(f"Email sent successfully! Message ID: {result['id']}\n")
-    else:
-        print("Email discarded.\n")
+        confirm = input("Send this email? (Y/N/Q to quit): ").strip().upper()
+        if confirm == "Y":
+            result = send_email(to, refined_subject, refined_body)
+            print(f"Email sent successfully! Message ID: {result['id']}\n")
+            break
+        elif confirm == "Q":
+            print("Email discarded.\n")
+            break
+        else:
+            feedback = input("What would you like to change? ").strip()
+            if not feedback:
+                print("No feedback provided. Keeping current draft.\n")
+                continue
+            print("\nRevising draft...")
+            revised = revise_draft(refined_subject, refined_body, feedback, tone)
+            refined_subject = revised["subject"]
+            refined_body = revised["body"]
 
 
 def option_auto_reply():

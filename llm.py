@@ -106,6 +106,39 @@ Return ONLY the JSON object, no other text."""
     return {"subject": subject, "body": response.text.strip()}
 
 
+def revise_draft(current_subject, current_body, feedback, tone="Professional"):
+    """Revise an already-refined email based on user feedback.
+
+    Returns a dict with 'subject' and 'body'.
+    """
+    prompt = f"""You are an expert executive assistant and professional copywriter. A user has reviewed a refined email draft and wants changes.
+
+Apply the user's feedback to revise the email. Follow these rules:
+1. Only change what the feedback asks for — keep everything else intact.
+2. No Hallucinations: NEVER invent dates, metrics, names, or commitments not in the current draft or feedback.
+3. Maintain the requested tone: {tone}.
+
+Current Subject: {current_subject}
+Current Body:
+{current_body}
+
+User Feedback: {feedback}
+
+Return a JSON object with exactly two keys:
+- "subject": the revised subject line
+- "body": the revised email body text
+
+Return ONLY the JSON object, no other text."""
+
+    response = _model.generate_content(prompt)
+    result = _parse_json_response(response.text)
+
+    if result and "subject" in result and "body" in result:
+        return {"subject": result["subject"], "body": result["body"]}
+
+    return {"subject": current_subject, "body": response.text.strip()}
+
+
 def generate_auto_reply(sender, subject, body):
     """Generate an appropriate auto-reply to an email.
 
