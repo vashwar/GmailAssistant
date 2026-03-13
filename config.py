@@ -8,10 +8,9 @@ load_dotenv()
 CREDENTIALS_PATH = os.path.join("credentials", "credentials.json")
 TOKEN_PATH = os.path.join("credentials", "token.json")
 
-# OAuth2 scopes — Gmail + Calendar
+# OAuth2 scopes — Gmail (full access) + Calendar
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
+    "https://mail.google.com/",
     "https://www.googleapis.com/auth/calendar",
 ]
 
