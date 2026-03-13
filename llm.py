@@ -69,24 +69,41 @@ Return ONLY the JSON object, no other text."""
     }
 
 
-def refine_draft(rough_text, recipient, subject):
+def refine_draft(rough_text, recipient, subject, tone="Professional"):
     """Refine a rough draft into a professional email.
 
-    Returns the polished email body as a string.
+    Returns a dict with 'subject' (refined) and 'body' (refined).
     """
-    prompt = f"""You are an email drafting assistant. Take the rough draft below and refine it
-into a professional, well-formatted email. Keep the original intent and key points.
-Adjust the tone to be professional yet friendly. Do not add a subject line.
+    prompt = f"""You are an expert executive assistant and professional copywriter. Your task is to take a rough draft or bullet points and transform them into a polished, clear, and highly effective email.
 
-Recipient: {recipient}
-Subject: {subject}
-Rough draft:
+Here are your strict guidelines:
+1. Maintain the Core Message: Do not alter the fundamental meaning, intent, or facts of the original draft.
+2. No Hallucinations: NEVER invent dates, metrics, names, or commitments that are not explicitly provided in the rough draft. If information seems missing, leave it out or use a placeholder like [Insert Date].
+3. Be Concise: Respect the recipient's time. Eliminate fluff, repetitive phrasing, and unnecessary pleasantries. Get straight to the point.
+4. Tone: Adjust the writing to match the requested tone: {tone}.
+5. Grammar & Flow: Fix all typos, grammatical errors, and awkward phrasing. Ensure smooth transitions between ideas.
+
+Please refine the following draft AND improve the subject line:
+
+Original Subject: {subject}
+Requested Tone: {tone}
+Rough Draft:
 {rough_text}
 
-Return ONLY the refined email body text, ready to send. No extra commentary."""
+Return a JSON object with exactly two keys:
+- "subject": the refined, clear, and concise subject line
+- "body": the refined email body text
+
+Return ONLY the JSON object, no other text."""
 
     response = _model.generate_content(prompt)
-    return response.text.strip()
+    result = _parse_json_response(response.text)
+
+    if result and "subject" in result and "body" in result:
+        return {"subject": result["subject"], "body": result["body"]}
+
+    # Fallback: return raw text as body with original subject
+    return {"subject": subject, "body": response.text.strip()}
 
 
 def generate_auto_reply(sender, subject, body):

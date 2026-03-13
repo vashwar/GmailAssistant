@@ -138,6 +138,16 @@ def option_compose_email():
         print("No subject entered.\n")
         return
 
+    print("\nSelect tone:")
+    print("  [1] Professional")
+    print("  [2] Friendly")
+    print("  [3] Formal")
+    print("  [4] Casual")
+    tone_map = {"1": "Professional", "2": "Friendly", "3": "Formal", "4": "Casual"}
+    tone_choice = input("Tone [1]: ").strip()
+    tone = tone_map.get(tone_choice, "Professional")
+    print(f"Using tone: {tone}\n")
+
     print("Enter your rough draft (type END on a new line to finish):")
     lines = []
     while True:
@@ -152,18 +162,22 @@ def option_compose_email():
         return
 
     print("\nRefining your draft with AI...")
-    refined = refine_draft(rough_text, to, subject)
+    refined = refine_draft(rough_text, to, subject, tone)
+    refined_subject = refined["subject"]
+    refined_body = refined["body"]
 
     print(f"\n{'='*60}")
     print(f"To:      {to}")
-    print(f"Subject: {subject}")
+    print(f"Subject: {refined_subject}")
+    if refined_subject != subject:
+        print(f"         (was: {subject})")
     print(f"{'='*60}")
-    print(refined)
+    print(refined_body)
     print(f"{'='*60}\n")
 
     confirm = input("Send this email? (Y/N): ").strip().upper()
     if confirm == "Y":
-        result = send_email(to, subject, refined)
+        result = send_email(to, refined_subject, refined_body)
         print(f"Email sent successfully! Message ID: {result['id']}\n")
     else:
         print("Email discarded.\n")
