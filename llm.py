@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime
 import google.generativeai as genai
 from config import GOOGLE_API_KEY, GEMINI_MODEL
 
@@ -107,3 +108,37 @@ Return ONLY the reply body text, ready to send. No extra commentary."""
 
     response = _model.generate_content(prompt)
     return response.text.strip()
+
+
+def parse_meeting_request(natural_language):
+    """Parse a natural language meeting request into structured data.
+
+    Returns a dict with:
+        summary (str), start (str), end (str), attendees (list[str])
+    """
+    today = datetime.now().strftime("%Y-%m-%d %A")
+
+    prompt = f"""Parse this meeting request into a JSON object with these keys:
+- "summary": the meeting title/description
+- "start": start datetime in ISO 8601 format (YYYY-MM-DDTHH:MM:SS)
+- "end": end datetime in ISO 8601 format (default to 1 hour after start if not specified)
+- "attendees": list of email addresses mentioned (empty list if none)
+
+Today is {today}. Use this as reference for relative dates like "next Tuesday", "tomorrow", etc.
+
+Meeting request: {natural_language}
+
+Return ONLY the JSON object, no other text."""
+
+    response = _model.generate_content(prompt)
+    result = _parse_json_response(response.text)
+
+    if result is None:
+        return None
+
+    return {
+        "summary": result.get("summary", "Meeting"),
+        "start": result.get("start", ""),
+        "end": result.get("end", ""),
+        "attendees": result.get("attendees", []),
+    }

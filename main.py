@@ -1,11 +1,27 @@
 from auth import get_gmail_service, get_calendar_service
 from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply
-from llm import summarize_email, refine_draft, generate_auto_reply
+from llm import summarize_email, refine_draft, generate_auto_reply, parse_meeting_request
+from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
 from config import USER_NAME
 
 
+def _format_event(event):
+    """Format a calendar event for display."""
+    start = event.get("start", {})
+    end = event.get("end", {})
+    start_str = start.get("dateTime", start.get("date", ""))
+    end_str = end.get("dateTime", end.get("date", ""))
+    # Clean up datetime display
+    if "T" in start_str:
+        start_str = start_str.replace("T", " ")[:16]
+    if "T" in end_str:
+        end_str = end_str.replace("T", " ")[:16]
+    summary = event.get("summary", "(No title)")
+    return f"{start_str} - {end_str}  {summary}"
+
+
 def option_summarize_unread():
-    """Option 1: Summarize unread emails."""
+    """Option 1: Summarize unread emails with deadline extraction."""
     count = input("How many unread emails to fetch? [10]: ").strip()
     max_results = int(count) if count else 10
 
@@ -17,6 +33,8 @@ def option_summarize_unread():
         return
 
     print(f"\nFound {len(emails)} unread email(s). Analyzing...\n")
+
+    all_deadlines = []
 
     for i, email in enumerate(emails, 1):
         print(f"--- Email {i}/{len(emails)} ---")
@@ -34,8 +52,26 @@ def option_summarize_unread():
 
         if analysis["deadlines"]:
             print(f"  Deadlines: {', '.join(analysis['deadlines'])}")
+            for d in analysis["deadlines"]:
+                all_deadlines.append((email["subject"], d))
 
         print()
+
+    # Offer to create calendar events from extracted deadlines
+    if all_deadlines:
+        print(f"\nFound {len(all_deadlines)} deadline(s) across emails:")
+        for i, (subj, deadline) in enumerate(all_deadlines, 1):
+            print(f"  [{i}] {deadline} (from: {subj})")
+
+        add_to_cal = input("\nAdd these deadlines to your calendar? (Y/N): ").strip().upper()
+        if add_to_cal == "Y":
+            for subj, deadline in all_deadlines:
+                try:
+                    created = create_event_from_deadline(subj, deadline)
+                    print(f"  Created: {created.get('summary', 'event')} on {deadline}")
+                except Exception as e:
+                    print(f"  Could not create event for '{deadline}': {e}")
+            print()
 
 
 def option_search_and_read():
@@ -172,6 +208,75 @@ def option_auto_reply():
         print("Reply discarded.\n")
 
 
+def option_view_calendar():
+    """Option 5: View today's or this week's calendar."""
+    print("  [1] Today's events")
+    print("  [2] This week's events")
+    view = input("Choose view: ").strip()
+
+    if view == "1":
+        print("\nToday's Events:")
+        events = get_todays_events()
+    elif view == "2":
+        print("\nThis Week's Events:")
+        events = get_weeks_events()
+    else:
+        print("Invalid choice.")
+        return
+
+    if not events:
+        print("  No events found.")
+    else:
+        for event in events:
+            print(f"  {_format_event(event)}")
+    print()
+
+
+def option_schedule_meeting():
+    """Option 6: Schedule a meeting from natural language."""
+    print("Describe the meeting (e.g., 'Sync with John next Tuesday at 2 PM'):")
+    request = input("> ").strip()
+    if not request:
+        print("No input provided.")
+        return
+
+    print("\nParsing your request...")
+    parsed = parse_meeting_request(request)
+
+    if not parsed or not parsed.get("start"):
+        print("Could not parse the meeting request. Please try again with more detail.")
+        return
+
+    print(f"\n  Title:     {parsed['summary']}")
+    print(f"  Start:     {parsed['start']}")
+    print(f"  End:       {parsed['end']}")
+    if parsed["attendees"]:
+        print(f"  Attendees: {', '.join(parsed['attendees'])}")
+
+    add_meet = input("\nAdd a Google Meet link? (Y/N): ").strip().upper()
+    meet_link = add_meet == "Y"
+
+    confirm = input("Create this event? (Y/N): ").strip().upper()
+    if confirm == "Y":
+        created = create_event(
+            parsed["summary"],
+            parsed["start"],
+            parsed["end"],
+            parsed["attendees"] if parsed["attendees"] else None,
+            add_meet_link=meet_link,
+        )
+        print(f"\nEvent created: {created.get('htmlLink', '')}")
+        if meet_link and "conferenceData" in created:
+            entry_points = created["conferenceData"].get("entryPoints", [])
+            for ep in entry_points:
+                if ep.get("entryPointType") == "video":
+                    print(f"Meet link: {ep['uri']}")
+                    break
+        print()
+    else:
+        print("Event creation cancelled.\n")
+
+
 def main():
     print("Authenticating with Google APIs...")
     get_gmail_service()
@@ -184,6 +289,8 @@ def main():
         print("  2. Search & Read Emails")
         print("  3. Compose Email (AI-Assisted)")
         print("  4. Auto-Reply to Email")
+        print("  5. View Calendar")
+        print("  6. Schedule Meeting")
         print("  0. Exit")
         print()
 
@@ -197,6 +304,10 @@ def main():
             option_compose_email()
         elif choice == "4":
             option_auto_reply()
+        elif choice == "5":
+            option_view_calendar()
+        elif choice == "6":
+            option_schedule_meeting()
         elif choice == "0":
             print("Goodbye!")
             break
