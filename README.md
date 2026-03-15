@@ -9,6 +9,7 @@ A Python CLI tool that acts as an intelligent executive assistant for Gmail and 
 - Flags emails that mention you by name
 - Rates urgency (HIGH / MEDIUM / LOW)
 - Extracts deadlines and offers to add them to your Google Calendar
+- **Trash emails** — after review, select emails to move to Trash by number
 
 ### 2. Search & Read Emails
 - Search using standard Gmail operators (`from:someone`, `subject:project`, `has:attachment`)
@@ -31,6 +32,7 @@ A Python CLI tool that acts as an intelligent executive assistant for Gmail and 
 ### 6. Schedule Meeting
 - Describe a meeting in natural language (e.g., *"Sync with John next Tuesday at 2 PM"*)
 - AI parses the title, start/end times, and attendees
+- **Interactive attendee picker** — search contacts or enter emails to add invitees
 - Option to auto-generate a Google Meet link
 
 ## Setup
@@ -99,7 +101,7 @@ GmailAssistant/
 ├── requirements.txt        # Python dependencies
 ├── config.py               # Loads .env, defines constants and scopes
 ├── auth.py                 # OAuth2 flow and service builders
-├── gmail_service.py        # Gmail API operations (fetch, search, send, contacts)
+├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts)
 ├── llm.py                  # Gemini AI integration (summarize, draft, revise, parse)
 ├── calendar_service.py     # Google Calendar API operations
 └── main.py                 # CLI entry point
