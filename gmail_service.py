@@ -176,6 +176,12 @@ def send_email(to, subject, body):
     return sent
 
 
+def trash_email(msg_id):
+    """Move an email to Trash."""
+    service = get_gmail_service()
+    service.users().messages().trash(userId="me", id=msg_id).execute()
+
+
 def send_reply(original_msg_id, to, subject, body, thread_id):
     """Send a reply to an existing email thread."""
     service = get_gmail_service()

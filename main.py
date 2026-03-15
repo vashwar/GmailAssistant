@@ -1,6 +1,6 @@
 import sys
 from auth import get_gmail_service, get_calendar_service
-from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply, search_contacts
+from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply, search_contacts, trash_email
 from llm import summarize_email, refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
 from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
 from config import USER_NAME
@@ -84,6 +84,30 @@ def option_summarize_unread():
                     print(f"  Created: {created.get('summary', 'event')} on {deadline}")
                 except Exception as e:
                     print(f"  Could not create event for '{deadline}': {e}")
+            print()
+
+    # Offer to trash emails
+    trash_prompt = input("Would you like to trash any emails? (Y/N): ").strip().upper()
+    if trash_prompt == "Y":
+        print("\nEmails:")
+        for i, email in enumerate(emails, 1):
+            print(f"  [{i}] {email['from']} — {email['subject']}")
+
+        print("\nEnter email numbers to trash (comma-separated, e.g. 1,3,5):")
+        selection = input("> ").strip()
+        if selection:
+            indices = [s.strip() for s in selection.split(",")]
+            for idx_str in indices:
+                if idx_str.isdigit():
+                    idx = int(idx_str) - 1
+                    if 0 <= idx < len(emails):
+                        try:
+                            trash_email(emails[idx]["id"])
+                            print(f"  Trashed: {emails[idx]['subject']}")
+                        except Exception as e:
+                            print(f"  Failed to trash '{emails[idx]['subject']}': {e}")
+                    else:
+                        print(f"  Invalid number: {idx_str}")
             print()
 
 
@@ -325,8 +349,27 @@ def option_schedule_meeting():
     print(f"\n  Title:     {parsed['summary']}")
     print(f"  Start:     {parsed['start']}")
     print(f"  End:       {parsed['end']}")
-    if parsed["attendees"]:
-        print(f"  Attendees: {', '.join(parsed['attendees'])}")
+
+    # Collect attendees interactively
+    attendees = list(parsed.get("attendees") or [])
+    if attendees:
+        print(f"  Attendees (from description): {', '.join(attendees)}")
+
+    print("\nAdd attendees to send meeting invites.")
+    while True:
+        email = _pick_recipient()
+        if email:
+            if email not in attendees:
+                attendees.append(email)
+                print(f"  Added: {email}")
+            else:
+                print(f"  {email} is already in the list.")
+        add_more = input("Add another attendee? (Y/N): ").strip().upper()
+        if add_more != "Y":
+            break
+
+    if attendees:
+        print(f"\n  Final attendees: {', '.join(attendees)}")
 
     add_meet = input("\nAdd a Google Meet link? (Y/N): ").strip().upper()
     meet_link = add_meet == "Y"
@@ -337,7 +380,7 @@ def option_schedule_meeting():
             parsed["summary"],
             parsed["start"],
             parsed["end"],
-            parsed["attendees"] if parsed["attendees"] else None,
+            attendees if attendees else None,
             add_meet_link=meet_link,
         )
         print(f"\nEvent created: {created.get('htmlLink', '')}")
