@@ -6,21 +6,35 @@ A Python CLI tool that acts as an intelligent executive assistant for Gmail and 
 
 ### 1. Smart Triage (Inbox Briefing)
 - Fetches unread emails and scores them using **configurable YAML rules + AI fallback**
+- **Email categorization** — automatically sorts emails into 13 categories (Jobs, Bills, Academic, Shopping, Newsletters, etc.) using fast keyword matching; uncategorized emails refined by AI
 - Groups emails into HIGH / MEDIUM / LOW priority in an executive digest
 - Flags emails that mention you by name
 - Extracts deadlines and surfaces attachments
-- **Bulk actions** — trash specific emails, trash all LOW priority, add deadlines to calendar, auto-reply
+- **Bulk actions**:
+  - Trash specific emails or all LOW priority emails
+  - **View by category** — group and review emails by category
+  - **Label emails by category** — apply Gmail labels; keyword-first plan shown to user, AI refinement loop if user gives feedback
+  - Add selected deadlines to calendar (pick which ones)
+  - Auto-reply to emails
 
 ### 2. Search & Read Emails
 - Search using standard Gmail operators (`from:someone`, `subject:project`, `has:attachment`)
 - View parsed, clean text of any email
 
 ### 3. Compose Email (AI-Assisted)
-- **Contact search** — type a name to find recipients from your email history, or enter an address directly
-- **Tone selection** — Professional, Friendly, Formal, or Casual
-- AI refines both the subject line and body using a strict copywriter prompt (no hallucinated dates/names)
-- **Feedback loop** — if the draft isn't right, provide feedback and the AI revises it; repeat until satisfied
-- Sends only after explicit Y confirmation
+Two modes:
+- **Send new email**:
+  - **Contact search** — type a name to find recipients from your email history, or enter an address directly
+  - Enter subject, pick tone, draft body
+  - AI refines both subject and body using a strict copywriter prompt (no hallucinated dates/names)
+  - **Feedback loop** — provide feedback and AI revises; repeat until satisfied
+  - Sends only after explicit Y confirmation
+- **Reply to existing email**:
+  - Search for a contact by name or email
+  - Select from recent emails with that contact (shows sender, subject, date)
+  - View the original email for context
+  - Same AI refinement and feedback loop as new email
+  - Sends as a threaded reply with proper `In-Reply-To` / `References` headers
 
 ### 4. Auto-Reply
 - Pick an unread email and generate an AI-drafted reply
@@ -61,8 +75,11 @@ pip install -r requirements.txt
    GEMINI_MODEL=gemini-2.0-flash
    USER_NAME=YourName
    TIMEZONE=America/Los_Angeles
+   EMAIL_CATEGORIES={"Jobs": ["linkedin", "recruiter"], "Bills": ["invoice", "payment"], ...}
    ```
-   `USER_NAME` is used for mention detection in email triage. `TIMEZONE` sets the calendar timezone. Both are optional and default to `Vashwar` and `America/Los_Angeles`.
+   - `USER_NAME` — used for mention detection in email triage (default: `Vashwar`)
+   - `TIMEZONE` — sets the calendar timezone (default: `America/Los_Angeles`)
+   - `EMAIL_CATEGORIES` — optional JSON dict to override the default 13 categories; if not set, uses built-in categories (Jobs, Academic, Shopping, Grocery, Restaurant, Bills, Travel, Banks/Investment, Social Media, Newsletters, Promotions, Family, NewsSummary)
 
 3. (Optional) Customize triage rules in `triage_rules.yaml` to auto-prioritize emails by sender, subject, or keyword.
 
@@ -100,7 +117,14 @@ python main.py
 python -m pytest tests/ -v
 ```
 
-48 tests across 4 files covering triage rules, LLM functions, MIME parsing, and digest formatting. All tests use mocked API responses — no live API calls required.
+66 tests across 4 files covering:
+- Triage rules and precedence
+- Email categorization (keyword matching and LLM-based)
+- LLM functions (JSON parsing, retry logic, draft refinement)
+- MIME walking and attachment extraction
+- Digest building and formatting (by priority and by category)
+
+All tests use mocked API responses — no live API calls required.
 
 ## Project Structure
 
@@ -113,18 +137,18 @@ GmailAssistant/
 │   └── token.json          # Generated OAuth2 token
 ├── requirements.txt        # Python dependencies
 ├── triage_rules.yaml       # Configurable priority rules (sender/subject/keyword)
-├── config.py               # Loads .env, defines constants and scopes
+├── config.py               # Loads .env, constants, EMAIL_CATEGORIES (13 default categories)
 ├── auth.py                 # OAuth2 flow and service builders
-├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts)
-├── llm.py                  # Gemini AI integration (triage, draft, revise, parse)
+├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts, labels)
+├── llm.py                  # Gemini AI integration (triage, draft, revise, parse, categorize)
 ├── calendar_service.py     # Google Calendar API operations
-├── triage_engine.py        # Smart Triage pipeline (rules + LLM scoring, digest, bulk actions)
+├── triage_engine.py        # Smart Triage pipeline (keyword categorization, LLM fallback, digest, labeling, deadline picker)
 ├── main.py                 # CLI entry point
 └── tests/
-    ├── test_triage_rules.py  # Rule loading, matching, precedence
-    ├── test_llm.py           # JSON parsing, triage scoring, retry logic
+    ├── test_triage_rules.py  # Rule loading, matching, categorization (keyword and LLM)
+    ├── test_llm.py           # JSON parsing, triage scoring, categorization, retry logic
     ├── test_gmail_service.py # MIME walking, attachment extraction
-    └── test_digest.py        # Digest building and formatting
+    └── test_digest.py        # Digest building, formatting by priority and by category
 ```
 
 ## Dependencies
