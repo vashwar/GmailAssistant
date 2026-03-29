@@ -226,6 +226,36 @@ def trash_email(msg_id):
     service.users().messages().trash(userId="me", id=msg_id).execute()
 
 
+def get_or_create_label(label_name):
+    """Get a Gmail label ID by name, creating it if it doesn't exist.
+
+    Returns the label ID string.
+    """
+    service = get_gmail_service()
+    results = service.users().labels().list(userId="me").execute()
+    for label in results.get("labels", []):
+        if label["name"].lower() == label_name.lower():
+            return label["id"]
+
+    # Create the label
+    body = {
+        "name": label_name,
+        "labelListVisibility": "labelShow",
+        "messageListVisibility": "show",
+    }
+    created = service.users().labels().create(userId="me", body=body).execute()
+    return created["id"]
+
+
+def apply_label(msg_id, label_id):
+    """Apply a label to a Gmail message."""
+    service = get_gmail_service()
+    service.users().messages().modify(
+        userId="me", id=msg_id,
+        body={"addLabelIds": [label_id]},
+    ).execute()
+
+
 def send_reply(original_msg_id, to, subject, body, thread_id):
     """Send a reply to an existing email thread."""
     service = get_gmail_service()

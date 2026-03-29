@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from llm import _parse_json_response, triage_email, retry_with_backoff
+from llm import _parse_json_response, triage_email, categorize_email_llm, retry_with_backoff
 
 
 # ── JSON parsing tests ────────────────────────────────────────────────────────
@@ -120,6 +120,62 @@ def test_triage_email_truncates_long_body(mock_generate):
     # Verify the prompt sent to LLM has truncated body
     call_args = mock_generate.call_args[0][0]
     assert len(call_args) < 10000  # prompt should be < 10K total
+
+
+# ── categorize_email_llm tests ───────────────────────────────────────────────
+
+
+@patch("llm._generate")
+def test_categorize_email_llm_returns_category(mock_generate):
+    """categorize_email_llm returns the LLM-chosen category."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"category": "Bills"})
+    mock_generate.return_value = mock_response
+
+    result = categorize_email_llm("pg-e@example.com", "Your bill", "Amount due", ["Bills", "Jobs", "Misc"])
+    assert result == "Bills"
+
+
+@patch("llm._generate")
+def test_categorize_email_llm_fallback_on_bad_json(mock_generate):
+    """categorize_email_llm returns 'Misc' when LLM returns garbage."""
+    mock_response = MagicMock()
+    mock_response.text = "I don't know"
+    mock_generate.return_value = mock_response
+
+    result = categorize_email_llm("a@b.com", "Test", "Body", ["Jobs", "Bills"])
+    assert result == "Misc"
+
+
+@patch("llm._generate")
+def test_categorize_email_llm_fallback_on_list_category(mock_generate):
+    """categorize_email_llm returns 'Misc' when LLM returns a list instead of string."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"category": ["Jobs", "Bills"]})
+    mock_generate.return_value = mock_response
+
+    result = categorize_email_llm("a@b.com", "Test", "Body", ["Jobs", "Bills"])
+    assert result == "Misc"
+
+
+@patch("llm._generate")
+def test_categorize_email_llm_with_feedback(mock_generate):
+    """categorize_email_llm includes user feedback and current category in prompt."""
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"category": "Jobs"})
+    mock_generate.return_value = mock_response
+
+    result = categorize_email_llm(
+        "noreply@linkedin.com", "New connection", "You have a new connection",
+        ["Jobs", "Social Media", "Misc"],
+        feedback="LinkedIn emails should be Jobs not Social Media",
+        current_category="Social Media",
+    )
+    assert result == "Jobs"
+    # Verify the prompt contains the feedback and current category
+    call_args = mock_generate.call_args[0][0]
+    assert "LinkedIn emails should be Jobs not Social Media" in call_args
+    assert "Social Media" in call_args
 
 
 # ── Retry decorator tests ────────────────────────────────────────────────────

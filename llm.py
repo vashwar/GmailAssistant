@@ -163,6 +163,56 @@ Return ONLY the JSON object, no other text."""
     }
 
 
+def categorize_email_llm(sender, subject, body, categories, feedback=None,
+                         current_category=None):
+    """Ask the LLM to categorize a single email into one of the given categories.
+
+    Args:
+        sender: Email sender.
+        subject: Email subject.
+        body: Email body.
+        categories: List of allowed category names.
+        feedback: Optional user feedback explaining what's wrong with the current plan.
+        current_category: The category currently assigned (shown to LLM with feedback).
+
+    Returns a category string.
+    """
+    truncated_body = body[:4000] if len(body) > 4000 else body
+    cat_list = json.dumps(categories)
+
+    feedback_block = ""
+    if feedback and current_category:
+        feedback_block = f"""
+The user reviewed the categorization and gave this feedback:
+"{feedback}"
+The email was previously categorized as "{current_category}".
+Take the user's feedback into account when choosing the new category.
+"""
+
+    prompt = f"""Categorize this email into exactly ONE of the following categories:
+{cat_list}
+
+If none fit well, use "Misc".
+{feedback_block}
+Email details:
+From: {sender}
+Subject: {subject}
+Body:
+{truncated_body}
+
+Return a JSON object with exactly one key:
+- "category": the chosen category
+
+Return ONLY the JSON object, no other text."""
+
+    response = _generate(prompt)
+    result = _parse_json_response(response.text)
+
+    if result and isinstance(result.get("category"), str):
+        return result["category"]
+    return "Misc"
+
+
 def refine_draft(rough_text, recipient, subject, tone="Professional"):
     """Refine a rough draft into a professional email.
 

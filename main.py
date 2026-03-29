@@ -114,28 +114,16 @@ def _pick_recipient():
     return None
 
 
-def option_compose_email():
-    """Option 3: Compose an email with AI assistance."""
-    to = _pick_recipient()
-    if not to:
-        print("No recipient selected.\n")
-        return
+def _draft_and_send(to, subject, tone, send_fn):
+    """Shared draft/refine/send loop used by both new email and reply flows.
 
-    subject = input("Subject: ").strip()
-    if not subject:
-        print("No subject entered.\n")
-        return
-
-    print("\nSelect tone:")
-    print("  [1] Professional")
-    print("  [2] Friendly")
-    print("  [3] Formal")
-    print("  [4] Casual")
-    tone_map = {"1": "Professional", "2": "Friendly", "3": "Formal", "4": "Casual"}
-    tone_choice = input("Tone [1]: ").strip()
-    tone = tone_map.get(tone_choice, "Professional")
-    print(f"Using tone: {tone}\n")
-
+    Args:
+        to: Recipient email address.
+        subject: Email subject line.
+        tone: Writing tone string.
+        send_fn: Callable(refined_subject, refined_body) that sends the message
+                 and returns the API result dict.
+    """
     print("Enter your rough draft (type END on a new line to finish):")
     lines = []
     while True:
@@ -166,7 +154,7 @@ def option_compose_email():
 
         confirm = input("Send this email? (Y/N/Q to quit): ").strip().upper()
         if confirm == "Y":
-            result = send_email(to, refined_subject, refined_body)
+            result = send_fn(refined_subject, refined_body)
             print(f"Email sent successfully! Message ID: {result['id']}\n")
             break
         elif confirm == "Q":
@@ -181,6 +169,144 @@ def option_compose_email():
             revised = revise_draft(refined_subject, refined_body, feedback, tone)
             refined_subject = revised["subject"]
             refined_body = revised["body"]
+
+
+def _pick_tone():
+    """Prompt user for a writing tone. Returns tone string."""
+    print("\nSelect tone:")
+    print("  [1] Professional")
+    print("  [2] Friendly")
+    print("  [3] Formal")
+    print("  [4] Casual")
+    tone_map = {"1": "Professional", "2": "Friendly", "3": "Formal", "4": "Casual"}
+    tone_choice = input("Tone [1]: ").strip()
+    tone = tone_map.get(tone_choice, "Professional")
+    print(f"Using tone: {tone}\n")
+    return tone
+
+
+def _compose_new_email():
+    """Compose and send a new email."""
+    to = _pick_recipient()
+    if not to:
+        print("No recipient selected.\n")
+        return
+
+    subject = input("Subject: ").strip()
+    if not subject:
+        print("No subject entered.\n")
+        return
+
+    tone = _pick_tone()
+
+    def send_new(refined_subject, refined_body):
+        return send_email(to, refined_subject, refined_body)
+
+    _draft_and_send(to, subject, tone, send_new)
+
+
+def _compose_reply():
+    """Search for an existing email by contact and reply to it."""
+    # Step 1: Find the contact
+    print("Search for a contact to reply to:")
+    query = input("> ").strip()
+    if not query:
+        print("No search query entered.\n")
+        return
+
+    # Search contacts
+    if "@" in query:
+        contact_email = query
+    else:
+        print(f"\nSearching contacts for \"{query}\"...")
+        contacts = search_contacts(query)
+
+        if not contacts:
+            print("No contacts found. Enter the email address manually:")
+            manual = input("> ").strip()
+            if not manual:
+                print("No recipient selected.\n")
+                return
+            contact_email = manual
+        else:
+            print(f"\nFound {len(contacts)} contact(s):\n")
+            for i, c in enumerate(contacts, 1):
+                display = f"{c['name']} <{c['email']}>" if c["name"] else c["email"]
+                print(f"  [{i}] {display}")
+
+            print()
+            choice = input("Select a contact (or type an email): ").strip()
+            if "@" in choice:
+                contact_email = choice
+            elif choice.isdigit() and 1 <= int(choice) <= len(contacts):
+                contact_email = contacts[int(choice) - 1]["email"]
+            else:
+                print("Invalid selection.\n")
+                return
+
+    # Step 2: Search for recent emails from/to this contact
+    print(f"\nSearching emails with {contact_email}...")
+    emails = search_emails(f"from:{contact_email} OR to:{contact_email}", max_results=10)
+
+    if not emails:
+        print(f"No emails found with {contact_email}.\n")
+        return
+
+    print(f"\nFound {len(emails)} email(s):\n")
+    for i, email in enumerate(emails, 1):
+        print(f"  [{i}] {email['from']} — {email['subject']} ({email['date']})")
+
+    print()
+    choice = input("Select an email to reply to (or press Enter to cancel): ").strip()
+    if not choice or not choice.isdigit():
+        print("Cancelled.\n")
+        return
+
+    idx = int(choice) - 1
+    if idx < 0 or idx >= len(emails):
+        print("Invalid selection.\n")
+        return
+
+    email = emails[idx]
+
+    # Show the original email for context
+    print(f"\n{'='*60}")
+    print(f"From:    {email['from']}")
+    print(f"Subject: {email['subject']}")
+    print(f"Date:    {email['date']}")
+    print(f"{'='*60}")
+    body_preview = email['body'][:500]
+    print(body_preview)
+    if len(email['body']) > 500:
+        print("... (truncated)")
+    print(f"{'='*60}\n")
+
+    # Step 3: Draft and send reply using shared flow
+    to = email["from"]
+    if "<" in to:
+        to = to.split("<")[1].rstrip(">")
+    subject = email["subject"] if email["subject"].lower().startswith("re:") else f"Re: {email['subject']}"
+
+    tone = _pick_tone()
+
+    def send_as_reply(refined_subject, refined_body):
+        return send_reply(email["id"], to, refined_subject, refined_body, email["threadId"])
+
+    _draft_and_send(to, subject, tone, send_as_reply)
+
+
+def option_compose_email():
+    """Option 3: Compose an email with AI assistance."""
+    print("\n  [1] Send new email")
+    print("  [2] Reply to existing email")
+    choice = input("\nSelect option: ").strip()
+
+    if choice == "1":
+        _compose_new_email()
+    elif choice == "2":
+        _compose_reply()
+    else:
+        print("Invalid option.\n")
 
 
 def option_auto_reply():

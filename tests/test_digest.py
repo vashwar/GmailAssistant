@@ -2,7 +2,7 @@
 
 import pytest
 
-from triage_engine import build_digest, format_digest
+from triage_engine import build_digest, format_digest, format_category_view
 
 
 def _make_email(priority="LOW", subject="Test", sender="a@b.com",
@@ -147,3 +147,47 @@ def test_format_digest_empty_digest():
     assert "INBOX BRIEFING" in text
     assert "0 unread" in text
     assert len(number_map) == 0
+
+
+def test_format_digest_shows_category():
+    """Category is displayed in the digest."""
+    emails = [_make_email(priority="HIGH", subject="Budget Review")]
+    emails[0]["category"] = "Finance"
+    digest = build_digest(emails)
+    text, _ = format_digest(digest)
+    assert "Category: Finance" in text
+
+
+# ── format_category_view tests ──────────────────────────────────────────────
+
+
+def test_format_category_view_groups_by_category():
+    """Emails are grouped by category."""
+    emails = [
+        {**_make_email(subject="Job alert"), "category": "Jobs"},
+        {**_make_email(subject="Invoice"), "category": "Bills"},
+        {**_make_email(subject="Another job"), "category": "Jobs"},
+    ]
+    text = format_category_view(emails)
+    assert "[Jobs] (2)" in text
+    assert "[Bills] (1)" in text
+    assert "INBOX BY CATEGORY" in text
+
+
+def test_format_category_view_misc_last():
+    """'Misc' category appears last."""
+    emails = [
+        {**_make_email(subject="Random"), "category": "Misc"},
+        {**_make_email(subject="From Amazon"), "category": "Online Shopping"},
+    ]
+    text = format_category_view(emails)
+    shopping_pos = text.index("[Online Shopping]")
+    misc_pos = text.index("[Misc]")
+    assert shopping_pos < misc_pos
+
+
+def test_format_category_view_empty():
+    """Empty email list renders without errors."""
+    text = format_category_view([])
+    assert "INBOX BY CATEGORY" in text
+    assert "0 emails in 0 categories" in text

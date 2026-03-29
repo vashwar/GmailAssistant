@@ -6,7 +6,8 @@ import tempfile
 import pytest
 import yaml
 
-from triage_engine import load_rules, match_rule
+from unittest.mock import patch, MagicMock
+from triage_engine import load_rules, match_rule, categorize_email, score_email
 
 
 def _write_rules(tmp_path, data):
@@ -140,3 +141,100 @@ def test_match_rule_no_match():
     priority, category = match_rule(email, rules)
     assert priority is None
     assert category is None
+
+
+# ── categorize_email tests ───────────────────────────────────────────────────
+
+SAMPLE_CATEGORIES = {
+    "Jobs": ["linkedin", "recruiter", "job"],
+    "Family": ["rashna9@gmail.com", "harun.rashid68@yahoo.com"],
+    "Bills": ["pg&e", "invoice", "payment due"],
+    "Academic": ["haas", ".edu", "university"],
+}
+
+
+def test_categorize_sender_keyword():
+    """Keyword in sender matches the category."""
+    email = {"from": "notifications@linkedin.com", "subject": "New connection"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Jobs"
+
+
+def test_categorize_sender_exact_email():
+    """Exact email address in sender matches (Family)."""
+    email = {"from": "Rashna <rashna9@gmail.com>", "subject": "Hello"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Family"
+
+
+def test_categorize_subject_keyword():
+    """Keyword in subject matches."""
+    email = {"from": "noreply@example.com", "subject": "Your invoice is ready"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Bills"
+
+
+def test_categorize_case_insensitive():
+    """Matching is case-insensitive."""
+    email = {"from": "admin@LINKEDIN.com", "subject": "RECRUITER reached out"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Jobs"
+
+
+def test_categorize_no_match_returns_misc():
+    """No keyword match returns 'Misc'."""
+    email = {"from": "random@unknown.com", "subject": "Random stuff"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Misc"
+
+
+def test_categorize_empty_categories():
+    """Empty categories dict returns 'Misc'."""
+    email = {"from": "a@b.com", "subject": "Hello"}
+    assert categorize_email(email, {}) == "Misc"
+
+
+def test_categorize_none_categories_uses_default():
+    """None categories falls back to default EMAIL_CATEGORIES."""
+    email = {"from": "notifications@linkedin.com", "subject": "New job"}
+    result = categorize_email(email, None)
+    assert result == "Jobs"
+
+
+def test_categorize_edu_in_sender():
+    """'.edu' keyword matches university senders."""
+    email = {"from": "registrar@berkeley.edu", "subject": "Enrollment"}
+    assert categorize_email(email, SAMPLE_CATEGORIES) == "Academic"
+
+
+# ── score_email LLM category normalization ───────────────────────────────────
+
+
+@patch("triage_engine.triage_email")
+def test_score_email_normalizes_list_category(mock_triage):
+    """LLM returning a list for category is normalized to a string."""
+    mock_triage.return_value = {
+        "summary": "Test",
+        "mentions_user": False,
+        "urgency": "low",
+        "category": ["work", "finance"],
+        "action_required": False,
+        "deadlines": [],
+    }
+    email = {"from": "random@unknown.com", "subject": "Random", "body": "text",
+             "id": "1", "threadId": "t1"}
+    result = score_email(email, rules=[], default_category="general")
+    assert isinstance(result["category"], str)
+    assert result["category"] == "work"
+
+
+@patch("triage_engine.triage_email")
+def test_score_email_normalizes_empty_list_category(mock_triage):
+    """LLM returning an empty list falls back to default category."""
+    mock_triage.return_value = {
+        "summary": "Test",
+        "mentions_user": False,
+        "urgency": "low",
+        "category": [],
+        "action_required": False,
+        "deadlines": [],
+    }
+    email = {"from": "random@unknown.com", "subject": "Random", "body": "text",
+             "id": "1", "threadId": "t1"}
+    result = score_email(email, rules=[], default_category="general")
+    assert result["category"] == "general"

@@ -5,9 +5,9 @@ from datetime import datetime
 
 import yaml
 
-from config import USER_NAME, TIMEZONE
-from gmail_service import fetch_unread_emails, trash_email, _format_size
-from llm import triage_email, generate_auto_reply
+from config import USER_NAME, TIMEZONE, EMAIL_CATEGORIES
+from gmail_service import fetch_unread_emails, trash_email, _format_size, get_or_create_label, apply_label
+from llm import triage_email, generate_auto_reply, categorize_email_llm
 from calendar_service import create_event_from_deadline
 
 logger = logging.getLogger(__name__)
@@ -87,14 +87,44 @@ def match_rule(email, rules):
     return None, None
 
 
+# ── Keyword-based categorization ─────────────────────────────────────────────
+
+def categorize_email(email, categories=None):
+    """Categorize an email by matching sender and subject against keyword lists.
+
+    Checks sender first (exact email matches and keyword substrings), then subject.
+    Returns the category name or "Misc" if no match.
+    """
+    if not categories:
+        categories = EMAIL_CATEGORIES
+    if not categories:
+        return "Misc"
+
+    sender = email.get("from", "").lower()
+    subject = email.get("subject", "").lower()
+
+    for category, keywords in categories.items():
+        for keyword in keywords:
+            kw = keyword.lower()
+            if kw in sender or kw in subject:
+                return category
+
+    return "Misc"
+
+
 # ── Scoring pipeline ──────────────────────────────────────────────────────────
 
 def score_email(email, rules, default_category="general", categories=None):
     """Two-phase scoring: deterministic rules first, LLM fallback.
 
+    Category precedence: rule_category > keyword_category > llm_category > default.
+
     Returns a scored dict augmenting the original email with triage fields.
     """
     rule_priority, rule_category = match_rule(email, rules)
+
+    # Keyword-based categorization from EMAIL_CATEGORIES
+    keyword_category = categorize_email(email)
 
     # LLM pass — always run for summary, deadlines, action detection
     llm_result = triage_email(
@@ -108,7 +138,18 @@ def score_email(email, rules, default_category="general", categories=None):
     else:
         priority = llm_result.get("urgency", "low").upper()
 
-    category = rule_category or llm_result.get("category", default_category)
+    # Category precedence: rule > keyword > LLM > default
+    if rule_category:
+        category = rule_category
+    elif keyword_category != "Misc":
+        category = keyword_category
+    else:
+        llm_category = llm_result.get("category", default_category)
+        # LLM may return a list — normalize to string
+        if isinstance(llm_category, list):
+            category = llm_category[0] if llm_category else default_category
+        else:
+            category = llm_category
 
     return {
         **email,
@@ -205,6 +246,9 @@ def format_digest(digest):
                     size = _format_size(att.get("size", 0))
                     lines.append(f"     [ATT] {att['filename']} ({size})")
 
+            cat = email.get("category", "")
+            if cat:
+                lines.append(f"     Category: {cat}")
             lines.append(f"     Summary: {email.get('summary', '')}")
             email_number += 1
 
@@ -229,6 +273,44 @@ def format_digest(digest):
     lines.append("=" * 62)
 
     return "\n".join(lines), number_map
+
+
+def format_category_view(scored_emails):
+    """Render scored emails grouped by category."""
+    # Group by category
+    cat_groups = {}
+    for email in scored_emails:
+        cat = email.get("category", "Misc")
+        cat_groups.setdefault(cat, []).append(email)
+
+    # Sort categories alphabetically, but "Misc" last
+    sorted_cats = sorted(cat_groups.keys(), key=lambda c: (c == "Misc", c))
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 62)
+    lines.append(f"  INBOX BY CATEGORY  —  {len(scored_emails)} emails in {len(cat_groups)} categories")
+    lines.append("=" * 62)
+
+    for cat in sorted_cats:
+        emails = cat_groups[cat]
+        lines.append("")
+        lines.append(f"  [{cat}] ({len(emails)})")
+        lines.append(f"  {'─' * 40}")
+
+        for email in emails:
+            subj = email.get("subject", "(no subject)")
+            if len(subj) > 50:
+                subj = subj[:47] + "..."
+            sender = email.get("from", "")
+            pri = email.get("priority", "LOW")
+            lines.append(f"    {pri:<6} {sender}")
+            lines.append(f"           {subj}")
+
+    lines.append("")
+    lines.append("=" * 62)
+
+    return "\n".join(lines)
 
 
 # ── Action menu ───────────────────────────────────────────────────────────────
@@ -297,14 +379,45 @@ def _action_trash_all_low(number_map, digest):
 
 
 def _action_add_deadlines(digest):
-    """Add all detected deadlines to calendar."""
+    """Let the user pick which detected deadlines to add to calendar."""
     deadlines = digest["deadlines"]
     if not deadlines:
         print("  No deadlines detected.\n")
         return
 
-    print(f"  Adding {len(deadlines)} deadline(s) to calendar...")
-    for d in deadlines:
+    print(f"\n  Detected {len(deadlines)} deadline(s):\n")
+    for i, d in enumerate(deadlines, 1):
+        print(f"    [{i}] {d['deadline']} — {d['subject']} (from {d['from']})")
+
+    print(f"\n  Enter deadline numbers to add (comma-separated, e.g. 1,3)")
+    print(f"  or 'A' to add all, or press Enter to cancel:")
+    selection = input("  > ").strip()
+
+    if not selection:
+        print("  Cancelled.\n")
+        return
+
+    if selection.upper() == "A":
+        selected = deadlines
+    else:
+        selected = []
+        for idx_str in selection.split(","):
+            idx_str = idx_str.strip()
+            if idx_str.isdigit():
+                idx = int(idx_str)
+                if 1 <= idx <= len(deadlines):
+                    selected.append(deadlines[idx - 1])
+                else:
+                    print(f"  Invalid number: {idx_str}")
+            else:
+                print(f"  Invalid input: {idx_str}")
+
+    if not selected:
+        print("  No valid deadlines selected.\n")
+        return
+
+    print(f"\n  Adding {len(selected)} deadline(s) to calendar...")
+    for d in selected:
         try:
             created = create_event_from_deadline(d["subject"], d["deadline"])
             print(f"  Created: {created.get('summary', 'event')} on {d['deadline']}")
@@ -347,6 +460,94 @@ def _action_auto_reply(number_map):
             print(f"  Failed to send reply: {e}\n")
     else:
         print("  Reply discarded.\n")
+
+
+def _print_label_plan(plan):
+    """Print the proposed labeling plan grouped by category."""
+    cat_groups = {}
+    for email, cat in plan:
+        cat_groups.setdefault(cat, []).append(email)
+
+    sorted_cats = sorted(cat_groups.keys(), key=lambda c: (c == "Misc", c))
+    print(f"\n  Proposed labels for {len(plan)} email(s) across {len(cat_groups)} categories:\n")
+    for cat in sorted_cats:
+        emails = cat_groups[cat]
+        print(f"    [{cat}] ({len(emails)})")
+        for email in emails:
+            subj = email.get("subject", "(no subject)")
+            if len(subj) > 50:
+                subj = subj[:47] + "..."
+            print(f"      - {email.get('from', '')} — {subj}")
+    print()
+
+
+def _apply_labels(plan):
+    """Apply Gmail labels from a confirmed plan. Returns (labeled_count, total)."""
+    label_cache = {}
+    labeled = 0
+
+    for email, cat in plan:
+        try:
+            if cat not in label_cache:
+                label_cache[cat] = get_or_create_label(cat)
+            apply_label(email["id"], label_cache[cat])
+            labeled += 1
+        except Exception as e:
+            print(f"  Failed to label '{email.get('subject', '')}': {e}")
+
+    return labeled, len(plan)
+
+
+def _action_label_by_category(scored_emails):
+    """Label emails by category: keyword-first, LLM with user feedback on rejection."""
+    if not scored_emails:
+        print("  No emails to label.\n")
+        return
+
+    # Phase 1: keyword-only categorization
+    plan = []
+    for email in scored_emails:
+        cat = categorize_email(email)
+        plan.append((email, cat))
+
+    all_categories = list(EMAIL_CATEGORIES.keys()) + ["Misc"]
+
+    while True:
+        _print_label_plan(plan)
+
+        confirm = input("  Apply these labels? (Y/N): ").strip().upper()
+        if confirm == "Y":
+            labeled, total = _apply_labels(plan)
+            print(f"  Labeled {labeled}/{total} email(s).\n")
+            return
+
+        # User rejected — ask for feedback
+        print("\n  What should be changed? (e.g. 'move LinkedIn emails to Jobs not Misc',")
+        print("  'all shopping receipts should be Online Shopping', etc.)")
+        feedback = input("  Feedback (or press Enter to cancel): ").strip()
+        if not feedback:
+            print("  Cancelled.\n")
+            return
+
+        # Re-categorize all emails with LLM using the feedback
+        print(f"\n  Re-categorizing {len(plan)} email(s) with AI using your feedback...")
+        new_plan = []
+        for i, (email, current_cat) in enumerate(plan, 1):
+            print(f"    Analyzing {i}/{len(plan)}: {email['subject'][:40]}...", end="\r")
+            try:
+                llm_cat = categorize_email_llm(
+                    email["from"], email["subject"], email["body"],
+                    all_categories,
+                    feedback=feedback,
+                    current_category=current_cat,
+                )
+                new_plan.append((email, llm_cat))
+            except Exception as e:
+                logger.warning("LLM categorization failed for %s: %s", email.get("id"), e)
+                new_plan.append((email, current_cat))
+
+        print()  # clear progress line
+        plan = new_plan
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -411,6 +612,8 @@ def run_triage():
         print("  [TL] Trash all LOW priority emails")
         print("  [A]  Auto-reply to an email")
         print("  [D]  Add deadlines to calendar")
+        print("  [C]  View by category")
+        print("  [L]  Label emails by category")
         print("  [Q]  Back to main menu")
 
         action = input("\n> ").strip().upper()
@@ -427,5 +630,9 @@ def run_triage():
             _action_auto_reply(number_map)
         elif action == "D":
             _action_add_deadlines(digest)
+        elif action == "C":
+            print(format_category_view(scored))
+        elif action == "L":
+            _action_label_by_category(scored)
         else:
             print("  Invalid action.\n")
