@@ -4,12 +4,12 @@ A Python CLI tool that acts as an intelligent executive assistant for Gmail and 
 
 ## Features
 
-### 1. Summarize Unread Emails
-- Fetches unread emails and generates AI-powered summaries
+### 1. Smart Triage (Inbox Briefing)
+- Fetches unread emails and scores them using **configurable YAML rules + AI fallback**
+- Groups emails into HIGH / MEDIUM / LOW priority in an executive digest
 - Flags emails that mention you by name
-- Rates urgency (HIGH / MEDIUM / LOW)
-- Extracts deadlines and offers to add them to your Google Calendar
-- **Trash emails** — after review, select emails to move to Trash by number
+- Extracts deadlines and surfaces attachments
+- **Bulk actions** — trash specific emails, trash all LOW priority, add deadlines to calendar, auto-reply
 
 ### 2. Search & Read Emails
 - Search using standard Gmail operators (`from:someone`, `subject:project`, `has:attachment`)
@@ -59,9 +59,14 @@ pip install -r requirements.txt
    ```
    GOOGLE_API_KEY=your_gemini_api_key_here
    GEMINI_MODEL=gemini-2.0-flash
+   USER_NAME=YourName
+   TIMEZONE=America/Los_Angeles
    ```
+   `USER_NAME` is used for mention detection in email triage. `TIMEZONE` sets the calendar timezone. Both are optional and default to `Vashwar` and `America/Los_Angeles`.
 
-3. Run the app — on first launch it will open a browser for Google OAuth consent:
+3. (Optional) Customize triage rules in `triage_rules.yaml` to auto-prioritize emails by sender, subject, or keyword.
+
+4. Run the app — on first launch it will open a browser for Google OAuth consent:
    ```bash
    python main.py
    ```
@@ -79,7 +84,7 @@ python main.py
 +---------------------------------------+
 |     Gmail & Calendar Assistant        |
 +---------------------------------------+
-|  1. Summarize Unread Emails           |
+|  1. Smart Triage (Inbox Briefing)     |
 |  2. Search & Read Emails              |
 |  3. Compose Email (AI-Assisted)       |
 |  4. Auto-Reply to Email               |
@@ -88,6 +93,14 @@ python main.py
 |  0. Exit                              |
 +---------------------------------------+
 ```
+
+## Testing
+
+```bash
+python -m pytest tests/ -v
+```
+
+48 tests across 4 files covering triage rules, LLM functions, MIME parsing, and digest formatting. All tests use mocked API responses — no live API calls required.
 
 ## Project Structure
 
@@ -99,12 +112,19 @@ GmailAssistant/
 │   ├── credentials.json    # OAuth2 client config
 │   └── token.json          # Generated OAuth2 token
 ├── requirements.txt        # Python dependencies
+├── triage_rules.yaml       # Configurable priority rules (sender/subject/keyword)
 ├── config.py               # Loads .env, defines constants and scopes
 ├── auth.py                 # OAuth2 flow and service builders
 ├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts)
-├── llm.py                  # Gemini AI integration (summarize, draft, revise, parse)
+├── llm.py                  # Gemini AI integration (triage, draft, revise, parse)
 ├── calendar_service.py     # Google Calendar API operations
-└── main.py                 # CLI entry point
+├── triage_engine.py        # Smart Triage pipeline (rules + LLM scoring, digest, bulk actions)
+├── main.py                 # CLI entry point
+└── tests/
+    ├── test_triage_rules.py  # Rule loading, matching, precedence
+    ├── test_llm.py           # JSON parsing, triage scoring, retry logic
+    ├── test_gmail_service.py # MIME walking, attachment extraction
+    └── test_digest.py        # Digest building and formatting
 ```
 
 ## Dependencies
@@ -115,3 +135,5 @@ GmailAssistant/
 - `python-dotenv` — Environment variable loading
 - `python-dateutil` — Date parsing for calendar events
 - `beautifulsoup4` — HTML email body extraction
+- `pyyaml` — Triage rules configuration
+- `pytest` — Test framework

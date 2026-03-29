@@ -1,0 +1,31 @@
+# Triage rules — first match wins, auto-sorted by specificity (sender > subject > keyword)
+#
+# Match types:
+#   from:             exact or glob pattern matched against sender (case-insensitive)
+#   subject_contains: case-insensitive substring match against subject
+#   keyword:          case-insensitive match against subject + first 500 chars of body
+
+rules:
+  # Sender rules (highest specificity)
+  - match:
+      from: "*@newsletter.example.com"
+    priority: LOW
+    category: "newsletters"
+
+  # Subject rules
+  - match:
+      subject_contains: "urgent"
+    priority: HIGH
+
+  - match:
+      subject_contains: "invoice"
+    priority: MEDIUM
+    category: "finance"
+
+  # Keyword rules (lowest specificity)
+  - match:
+      keyword: "deadline"
+    priority: HIGH
+
+# Default category for emails that don't match any rule
+default_category: "general"

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from dateutil import parser as dateutil_parser
 from auth import get_calendar_service
+from config import TIMEZONE
 
 
 def get_todays_events():
@@ -59,11 +60,11 @@ def create_event(summary, start, end, attendees=None, add_meet_link=False):
         "summary": summary,
         "start": {
             "dateTime": start_dt.isoformat(),
-            "timeZone": "America/Los_Angeles",
+            "timeZone": TIMEZONE,
         },
         "end": {
             "dateTime": end_dt.isoformat(),
-            "timeZone": "America/Los_Angeles",
+            "timeZone": TIMEZONE,
         },
     }
 

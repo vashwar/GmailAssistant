@@ -1,12 +1,51 @@
 import json
 import re
+import time
+import logging
 from datetime import datetime
+from functools import wraps
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable
 from config import GOOGLE_API_KEY, GEMINI_MODEL
+
+logger = logging.getLogger(__name__)
 
 # Configure Gemini
 genai.configure(api_key=GOOGLE_API_KEY)
 _model = genai.GenerativeModel(GEMINI_MODEL)
+
+
+def retry_with_backoff(max_retries=3, base_delay=1.0, backoff_multiplier=2.0):
+    """Decorator that retries a function on transient API failures with exponential backoff.
+
+    Retryable: ResourceExhausted (429), ServiceUnavailable (503), ConnectionError, TimeoutError.
+    All other exceptions are raised immediately.
+    """
+    retryable = (ResourceExhausted, ServiceUnavailable, ConnectionError, TimeoutError)
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = base_delay
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except retryable as e:
+                    if attempt == max_retries:
+                        logger.error("All %d retries exhausted for %s: %s", max_retries, func.__name__, e)
+                        raise
+                    logger.warning("Retry %d/%d for %s after %s: %.1fs backoff",
+                                   attempt + 1, max_retries, func.__name__, type(e).__name__, delay)
+                    time.sleep(delay)
+                    delay *= backoff_multiplier
+        return wrapper
+    return decorator
+
+
+@retry_with_backoff()
+def _generate(prompt):
+    """Wrapper around model.generate_content with retry logic."""
+    return _model.generate_content(prompt)
 
 
 def _parse_json_response(text):
@@ -50,7 +89,7 @@ Body:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _model.generate_content(prompt)
+    response = _generate(prompt)
     result = _parse_json_response(response.text)
 
     if result is None:
@@ -65,6 +104,61 @@ Return ONLY the JSON object, no other text."""
         "summary": result.get("summary", "No summary available"),
         "mentions_user": result.get("mentions_user", False),
         "urgency": result.get("urgency", "low"),
+        "deadlines": result.get("deadlines", []),
+    }
+
+
+def triage_email(sender, subject, body, user_name="Vashwar", categories=None):
+    """Triage an email with priority scoring, categorization, and action detection.
+
+    Returns a dict with:
+        summary (str), mentions_user (bool), urgency (str),
+        category (str), action_required (bool), deadlines (list[str])
+    """
+    truncated_body = body[:4000] if len(body) > 4000 else body
+
+    if categories:
+        cat_instruction = f'- "category": one of {json.dumps(categories)}'
+    else:
+        cat_instruction = '- "category": a short label that best describes this email (e.g. "work", "newsletter", "finance")'
+
+    prompt = f"""Analyze this email and return a JSON object with exactly these keys:
+- "summary": a concise 1-2 sentence summary
+- "mentions_user": true if the email specifically mentions or addresses "{user_name}" by name, false otherwise
+- "urgency": one of "high", "medium", or "low"
+{cat_instruction}
+- "action_required": true if this email requires a response or action from the recipient, false otherwise
+- "deadlines": a list of deadline strings found in the email (empty list if none)
+
+Do NOT invent dates, names, or deadlines that are not explicitly in the email.
+
+Email details:
+From: {sender}
+Subject: {subject}
+Body:
+{truncated_body}
+
+Return ONLY the JSON object, no other text."""
+
+    response = _generate(prompt)
+    result = _parse_json_response(response.text)
+
+    if result is None:
+        return {
+            "summary": response.text.strip()[:200],
+            "mentions_user": False,
+            "urgency": "low",
+            "category": "uncategorized",
+            "action_required": False,
+            "deadlines": [],
+        }
+
+    return {
+        "summary": result.get("summary", "No summary available"),
+        "mentions_user": result.get("mentions_user", False),
+        "urgency": result.get("urgency", "low").lower(),
+        "category": result.get("category", "uncategorized"),
+        "action_required": result.get("action_required", False),
         "deadlines": result.get("deadlines", []),
     }
 
@@ -96,7 +190,7 @@ Return a JSON object with exactly two keys:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _model.generate_content(prompt)
+    response = _generate(prompt)
     result = _parse_json_response(response.text)
 
     if result and "subject" in result and "body" in result:
@@ -130,7 +224,7 @@ Return a JSON object with exactly two keys:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _model.generate_content(prompt)
+    response = _generate(prompt)
     result = _parse_json_response(response.text)
 
     if result and "subject" in result and "body" in result:
@@ -156,7 +250,7 @@ Body:
 
 Return ONLY the reply body text, ready to send. No extra commentary."""
 
-    response = _model.generate_content(prompt)
+    response = _generate(prompt)
     return response.text.strip()
 
 
@@ -180,7 +274,7 @@ Meeting request: {natural_language}
 
 Return ONLY the JSON object, no other text."""
 
-    response = _model.generate_content(prompt)
+    response = _generate(prompt)
     result = _parse_json_response(response.text)
 
     if result is None:

@@ -11,47 +11,90 @@ def _decode_base64url(data):
     return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
 
 
-def _extract_body(payload):
-    """Recursively walk MIME parts to extract the email body.
-    Prefers text/plain; falls back to text/html stripped via BeautifulSoup.
+def _format_size(size_bytes):
+    """Convert byte count to human-readable string (e.g. 1.2 MB)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _walk_payload(payload):
+    """Single-pass MIME tree walk extracting body text and attachment metadata.
+
+    Returns (body_text, attachments) where:
+        body_text: str or None — plain text preferred, HTML fallback stripped via BeautifulSoup
+        attachments: list of dicts with {filename, size, mime_type, part_id}
     """
     plain_text = None
     html_text = None
+    attachments = []
 
-    if "parts" in payload:
-        for part in payload["parts"]:
-            result = _extract_body(part)
-            if result:
-                # Keep looking for plain text, but save html as fallback
-                mime = part.get("mimeType", "")
-                if mime == "text/plain" or (not plain_text and "plain" not in str(result)):
-                    if mime == "text/plain":
-                        plain_text = result
-                    elif mime == "text/html":
-                        html_text = result
-                    elif plain_text is None:
-                        plain_text = result
-        return plain_text or html_text
-    else:
-        mime = payload.get("mimeType", "")
-        body_data = payload.get("body", {}).get("data", "")
+    def _walk(part):
+        nonlocal plain_text, html_text
+        mime = part.get("mimeType", "")
+
+        # Recurse into multipart containers
+        if "parts" in part:
+            for sub in part["parts"]:
+                _walk(sub)
+            return
+
+        # Check for attachment (has filename in headers or disposition)
+        filename = part.get("filename", "")
+        if not filename:
+            # Check Content-Disposition header for filename
+            for header in part.get("headers", []):
+                if header["name"].lower() == "content-disposition" and "filename" in header["value"]:
+                    # Extract filename from header
+                    match = re.search(r'filename="?([^";]+)"?', header["value"])
+                    if match:
+                        filename = match.group(1)
+                    break
+
+        if filename:
+            body_meta = part.get("body", {})
+            attachments.append({
+                "filename": filename,
+                "size": body_meta.get("size", 0),
+                "mime_type": mime,
+                "part_id": body_meta.get("attachmentId", ""),
+            })
+            return
+
+        # Extract body text from leaf parts
+        body_data = part.get("body", {}).get("data", "")
         if not body_data:
-            return None
+            return
+
         decoded = _decode_base64url(body_data)
-        if mime == "text/plain":
-            return decoded
-        elif mime == "text/html":
-            soup = BeautifulSoup(decoded, "html.parser")
-            return soup.get_text(separator="\n", strip=True)
-        return decoded
+        if mime == "text/plain" and plain_text is None:
+            plain_text = decoded
+        elif mime == "text/html" and html_text is None:
+            html_text = decoded
+
+    _walk(payload)
+
+    # Prefer plain text; fall back to stripped HTML
+    if plain_text:
+        body = plain_text
+    elif html_text:
+        soup = BeautifulSoup(html_text, "html.parser")
+        body = soup.get_text(separator="\n", strip=True)
+    else:
+        body = None
+
+    return body, attachments
 
 
 def _parse_message(msg):
-    """Parse a full Gmail message into a clean dict."""
+    """Parse a full Gmail message into a clean dict including attachments."""
     headers = msg.get("payload", {}).get("headers", [])
     header_map = {h["name"].lower(): h["value"] for h in headers}
 
-    body = _extract_body(msg.get("payload", {})) or "(no body)"
+    body, attachments = _walk_payload(msg.get("payload", {}))
 
     return {
         "id": msg["id"],
@@ -60,7 +103,8 @@ def _parse_message(msg):
         "from": header_map.get("from", "(unknown sender)"),
         "to": header_map.get("to", ""),
         "date": header_map.get("date", ""),
-        "body": body,
+        "body": body or "(no body)",
+        "attachments": attachments,
     }
 
 

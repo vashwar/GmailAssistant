@@ -1,15 +1,15 @@
 import sys
 from auth import get_gmail_service, get_calendar_service
-from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply, search_contacts, trash_email
-from llm import summarize_email, refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
-from calendar_service import get_todays_events, get_weeks_events, create_event, create_event_from_deadline
-from config import USER_NAME
+from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, send_email, send_reply, search_contacts
+from llm import refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
+from calendar_service import get_todays_events, get_weeks_events, create_event
+from triage_engine import run_triage
 
 MENU = """
 +---------------------------------------+
 |     Gmail & Calendar Assistant        |
 +---------------------------------------+
-|  1. Summarize Unread Emails           |
+|  1. Smart Triage (Inbox Briefing)     |
 |  2. Search & Read Emails              |
 |  3. Compose Email (AI-Assisted)       |
 |  4. Auto-Reply to Email               |
@@ -34,83 +34,6 @@ def _format_event(event):
     return f"{start_str} - {end_str}  {summary}"
 
 
-def option_summarize_unread():
-    """Option 1: Summarize unread emails with deadline extraction."""
-    count = input("How many unread emails to fetch? [10]: ").strip()
-    max_results = int(count) if count else 10
-
-    print(f"\nFetching up to {max_results} unread emails...")
-    emails = fetch_unread_emails(max_results)
-
-    if not emails:
-        print("No unread emails found.\n")
-        return
-
-    print(f"Found {len(emails)} unread email(s). Analyzing...\n")
-
-    all_deadlines = []
-
-    for i, email in enumerate(emails, 1):
-        print(f"--- Email {i}/{len(emails)} ---")
-        print(f"  From:    {email['from']}")
-        print(f"  Subject: {email['subject']}")
-        print(f"  Date:    {email['date']}")
-
-        analysis = summarize_email(email["from"], email["subject"], email["body"], USER_NAME)
-
-        print(f"  Summary: {analysis['summary']}")
-        print(f"  Urgency: {analysis['urgency'].upper()}")
-
-        if analysis["mentions_user"]:
-            print(f"  ** MENTIONS {USER_NAME.upper()} **")
-
-        if analysis["deadlines"]:
-            print(f"  Deadlines: {', '.join(analysis['deadlines'])}")
-            for d in analysis["deadlines"]:
-                all_deadlines.append((email["subject"], d))
-
-        print()
-
-    if all_deadlines:
-        print(f"Found {len(all_deadlines)} deadline(s) across emails:")
-        for i, (subj, deadline) in enumerate(all_deadlines, 1):
-            print(f"  [{i}] {deadline} (from: {subj})")
-
-        add_to_cal = input("\nAdd these deadlines to your calendar? (Y/N): ").strip().upper()
-        if add_to_cal == "Y":
-            for subj, deadline in all_deadlines:
-                try:
-                    created = create_event_from_deadline(subj, deadline)
-                    print(f"  Created: {created.get('summary', 'event')} on {deadline}")
-                except Exception as e:
-                    print(f"  Could not create event for '{deadline}': {e}")
-            print()
-
-    # Offer to trash emails
-    trash_prompt = input("Would you like to trash any emails? (Y/N): ").strip().upper()
-    if trash_prompt == "Y":
-        print("\nEmails:")
-        for i, email in enumerate(emails, 1):
-            print(f"  [{i}] {email['from']} — {email['subject']}")
-
-        print("\nEnter email numbers to trash (comma-separated, e.g. 1,3,5):")
-        selection = input("> ").strip()
-        if selection:
-            indices = [s.strip() for s in selection.split(",")]
-            for idx_str in indices:
-                if idx_str.isdigit():
-                    idx = int(idx_str) - 1
-                    if 0 <= idx < len(emails):
-                        try:
-                            trash_email(emails[idx]["id"])
-                            print(f"  Trashed: {emails[idx]['subject']}")
-                        except Exception as e:
-                            print(f"  Failed to trash '{emails[idx]['subject']}': {e}")
-                    else:
-                        print(f"  Invalid number: {idx_str}")
-            print()
-
-
 def option_search_and_read():
     """Option 2: Search and read emails."""
     query = input("Enter Gmail search query (e.g., from:someone subject:project): ").strip()
@@ -119,7 +42,11 @@ def option_search_and_read():
         return
 
     count = input("Max results? [10]: ").strip()
-    max_results = int(count) if count else 10
+    try:
+        max_results = int(count) if count else 10
+    except ValueError:
+        print("Invalid number, using default of 10.")
+        max_results = 10
 
     print(f"\nSearching for: {query}")
     emails = search_emails(query, max_results)
@@ -259,7 +186,11 @@ def option_compose_email():
 def option_auto_reply():
     """Option 4: Generate and send auto-replies to unread emails."""
     count = input("How many unread emails to check? [5]: ").strip()
-    max_results = int(count) if count else 5
+    try:
+        max_results = int(count) if count else 5
+    except ValueError:
+        print("Invalid number, using default of 5.")
+        max_results = 5
 
     print(f"\nFetching up to {max_results} unread emails...")
     emails = fetch_unread_emails(max_results)
@@ -406,7 +337,7 @@ def main():
     print("Authentication successful!\n")
 
     options = {
-        "1": ("Summarize Unread Emails", option_summarize_unread),
+        "1": ("Smart Triage (Inbox Briefing)", run_triage),
         "2": ("Search & Read Emails", option_search_and_read),
         "3": ("Compose Email (AI-Assisted)", option_compose_email),
         "4": ("Auto-Reply to Email", option_auto_reply),

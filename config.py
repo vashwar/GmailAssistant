@@ -22,4 +22,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 EMAIL_CATEGORIES = json.loads(os.getenv("EMAIL_CATEGORIES", "{}"))
 
 # User identity for mention detection
-USER_NAME = "Vashwar"
+USER_NAME = os.getenv("USER_NAME", "Vashwar")
+
+# Timezone for calendar events
+TIMEZONE = os.getenv("TIMEZONE", "America/Los_Angeles")
