@@ -22,10 +22,11 @@ def _write_rules(tmp_path, data):
 
 
 def test_load_rules_missing_file():
-    """Missing file returns empty rules and default category."""
-    rules, default = load_rules("/nonexistent/rules.yaml")
+    """Missing file returns empty rules, default category, and config categories."""
+    rules, default, cats = load_rules("/nonexistent/rules.yaml")
     assert rules == []
     assert default == "general"
+    assert cats  # Should fall back to config
 
 
 def test_load_rules_valid_yaml(tmp_path):
@@ -36,11 +37,14 @@ def test_load_rules_valid_yaml(tmp_path):
             {"match": {"subject_contains": "invoice"}, "priority": "MEDIUM", "category": "finance"},
         ],
         "default_category": "inbox",
+        "categories": {"Work": ["project", "meeting"], "Finance": ["invoice", "payment"]},
     }
     path = _write_rules(str(tmp_path), data)
-    rules, default = load_rules(path)
+    rules, default, cats = load_rules(path)
     assert len(rules) == 2
     assert default == "inbox"
+    assert "Work" in cats
+    assert "Finance" in cats
 
 
 def test_load_rules_malformed_yaml(tmp_path):
@@ -48,9 +52,10 @@ def test_load_rules_malformed_yaml(tmp_path):
     path = os.path.join(str(tmp_path), "bad.yaml")
     with open(path, "w") as f:
         f.write(": : : not valid yaml [[[")
-    rules, default = load_rules(path)
+    rules, default, cats = load_rules(path)
     assert rules == []
     assert default == "general"
+    assert cats  # Falls back to config
 
 
 def test_load_rules_non_dict_root(tmp_path):
@@ -58,18 +63,20 @@ def test_load_rules_non_dict_root(tmp_path):
     path = os.path.join(str(tmp_path), "list.yaml")
     with open(path, "w") as f:
         f.write("- item1\n- item2\n")
-    rules, default = load_rules(path)
+    rules, default, cats = load_rules(path)
     assert rules == []
     assert default == "general"
+    assert cats  # Falls back to config
 
 
 def test_load_rules_empty_rules_list(tmp_path):
     """YAML with empty rules list works."""
     data = {"rules": [], "default_category": "misc"}
     path = _write_rules(str(tmp_path), data)
-    rules, default = load_rules(path)
+    rules, default, cats = load_rules(path)
     assert rules == []
     assert default == "misc"
+    assert cats  # Falls back to config
 
 
 def test_load_rules_auto_sorts_by_specificity(tmp_path):
@@ -82,7 +89,7 @@ def test_load_rules_auto_sorts_by_specificity(tmp_path):
         ],
     }
     path = _write_rules(str(tmp_path), data)
-    rules, _ = load_rules(path)
+    rules, _, _ = load_rules(path)
     # sender first, then subject, then keyword
     assert "from" in rules[0]["match"]
     assert "subject_contains" in rules[1]["match"]

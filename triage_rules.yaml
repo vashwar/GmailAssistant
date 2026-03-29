@@ -29,3 +29,133 @@ rules:
 
 # Default category for emails that don't match any rule
 default_category: "general"
+
+# Email categorization — keywords matched case-insensitively against sender and subject
+# Emails that match a keyword go to that category. If no match, they go to "Misc"
+categories:
+  Jobs:
+    - linkedin
+    - recruiter
+    - job
+    - career
+    - hiring
+    - glassdoor
+    - indeed
+    - dice
+
+  Academic:
+    - haas
+    - ewmba
+    - .edu
+    - university
+    - berkeley
+    - coursework
+    - cohort
+    - academic
+
+  Online Shopping:
+    - amazon
+    - ebay
+    - target
+    - walmart
+    - etsy
+    - order confirmation
+    - shipment
+    - tracking
+    - shopify
+
+  Grocery:
+    - whole foods
+    - meat corner
+    - instacart
+    - grocery
+    - safeway
+    - trader joe
+
+  Restaurant:
+    - doordash
+    - ubereats
+    - grubhub
+    - restaurant
+    - dining
+    - reservation
+    - opentable
+    - yelp receipt
+
+  Bills:
+    - pg&e
+    - utility
+    - bill
+    - payment due
+    - invoice
+    - subscription
+    - comcast
+    - xfinity
+    - t-mobile
+    - at&t
+    - verizon
+
+  Travel:
+    - airline
+    - flight
+    - hotel
+    - booking
+    - boarding pass
+    - trip
+    - united
+    - delta
+    - southwest
+    - airbnb
+    - expedia
+    - kayak
+
+  Banks/Investment:
+    - bank
+    - chase
+    - wells fargo
+    - credit card
+    - brokerage
+    - venmo
+    - zelle
+    - tax
+    - fidelity
+    - schwab
+    - robinhood
+    - statement
+
+  Social Media:
+    - facebook
+    - instagram
+    - twitter
+    - tiktok
+    - reddit
+    - nextdoor
+    - snapchat
+
+  Newsletters:
+    - substack
+    - medium
+    - newsletter
+    - digest
+    - weekly update
+    - mailing list
+
+  Promotions:
+    - sale
+    - coupon
+    - promo
+    - "% off"
+    - deal
+    - loyalty
+    - reward
+    - offer
+    - unsubscribe
+
+  Family:
+    - rashna9@gmail.com
+    - harun.rashid68@yahoo.com
+    - harunur.rashid68@gmail.com
+    - laila.rashid1980@gmail.com
+
+  NewsSummary:
+    - onboarding@resend.dev

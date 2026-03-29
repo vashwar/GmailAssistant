@@ -18,28 +18,40 @@ RULES_PATH = "triage_rules.yaml"
 # ── Rule loading ──────────────────────────────────────────────────────────────
 
 def load_rules(path=RULES_PATH):
-    """Load triage rules from YAML. Returns (rules_list, default_category) or ([], "general") on failure."""
+    """Load triage rules and categories from YAML.
+
+    Returns (rules_list, default_category, categories_dict) or ([], "general", {}) on failure.
+    categories_dict maps category name -> list of keywords (or uses EMAIL_CATEGORIES from config if not in YAML).
+    """
     if not os.path.exists(path):
-        logger.info("No triage rules file at %s — using LLM-only scoring.", path)
-        return [], "general"
+        logger.info("No triage rules file at %s — using LLM-only scoring and config categories.", path)
+        return [], "general", EMAIL_CATEGORIES
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except (yaml.YAMLError, OSError) as e:
-        logger.warning("Malformed or unreadable triage rules (%s): %s — using LLM-only scoring.", path, e)
+        logger.warning("Malformed or unreadable triage rules (%s): %s — using LLM-only scoring and config categories.", path, e)
         print(f"  Warning: Could not parse {path}: {e}")
-        return [], "general"
+        return [], "general", EMAIL_CATEGORIES
 
     if not isinstance(data, dict):
-        logger.warning("triage_rules.yaml root is not a dict — using LLM-only scoring.")
+        logger.warning("triage_rules.yaml root is not a dict — using LLM-only scoring and config categories.")
         print(f"  Warning: {path} has invalid structure.")
-        return [], "general"
+        return [], "general", EMAIL_CATEGORIES
 
     rules = data.get("rules", [])
     if not isinstance(rules, list):
         rules = []
     default_category = data.get("default_category", "general")
+
+    # Load categories from YAML, or fall back to config
+    categories = data.get("categories", {})
+    if not isinstance(categories, dict):
+        categories = EMAIL_CATEGORIES
+    elif not categories:
+        # Empty dict in YAML — use config
+        categories = EMAIL_CATEGORIES
 
     # Auto-sort by specificity: sender > subject_contains > keyword
     def _specificity(rule):
@@ -53,7 +65,7 @@ def load_rules(path=RULES_PATH):
         return 3
 
     rules.sort(key=_specificity)
-    return rules, default_category
+    return rules, default_category, categories
 
 
 def match_rule(email, rules):
@@ -498,19 +510,27 @@ def _apply_labels(plan):
     return labeled, len(plan)
 
 
-def _action_label_by_category(scored_emails):
-    """Label emails by category: keyword-first, LLM with user feedback on rejection."""
+def _action_label_by_category(scored_emails, categories=None):
+    """Label emails by category: keyword-first, LLM with user feedback on rejection.
+
+    Args:
+        scored_emails: List of scored email dicts.
+        categories: Dict of category_name -> list of keywords (or None to use default).
+    """
     if not scored_emails:
         print("  No emails to label.\n")
         return
 
+    if categories is None:
+        categories = EMAIL_CATEGORIES
+
     # Phase 1: keyword-only categorization
     plan = []
     for email in scored_emails:
-        cat = categorize_email(email)
+        cat = categorize_email(email, categories)
         plan.append((email, cat))
 
-    all_categories = list(EMAIL_CATEGORIES.keys()) + ["Misc"]
+    all_categories = list(categories.keys()) + ["Misc"]
 
     while True:
         _print_label_plan(plan)
@@ -570,18 +590,17 @@ def run_triage():
 
     print(f"Found {len(emails)} email(s). Running triage")
 
-    # Load rules
-    rules, default_category = load_rules()
-    categories = list({r.get("category") for r in rules if r.get("category")})
-    if not categories:
-        categories = None
+    # Load rules and categories
+    rules, default_category, yaml_categories = load_rules()
+    # Pass only the category names (not keywords) to LLM
+    category_names = list(yaml_categories.keys()) if yaml_categories else None
 
     # Score each email with progress indicator
     scored = []
     for i, email in enumerate(emails, 1):
         print(f"  Analyzing {i}/{len(emails)}: {email['subject'][:40]}...", end="\r")
         try:
-            result = score_email(email, rules, default_category, categories)
+            result = score_email(email, rules, default_category, category_names)
             scored.append(result)
         except Exception as e:
             logger.warning("Failed to score email %s: %s", email.get("id"), e)
@@ -633,6 +652,6 @@ def run_triage():
         elif action == "C":
             print(format_category_view(scored))
         elif action == "L":
-            _action_label_by_category(scored)
+            _action_label_by_category(scored, yaml_categories)
         else:
             print("  Invalid action.\n")
