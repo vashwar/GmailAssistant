@@ -209,6 +209,46 @@ def test_categorize_edu_in_sender():
     assert categorize_email(email, SAMPLE_CATEGORIES) == "Academic"
 
 
+def test_categorize_exact_email_match_strict():
+    """Exact email match takes precedence over substring keywords."""
+    categories = {
+        "Family": ["rashna9@gmail.com"],
+        "Misc": ["rashna"],  # This keyword would match "rashna9@gmail.com" as substring
+    }
+    # Exact match should win
+    email = {"from": "rashna9@gmail.com", "subject": "Hello"}
+    assert categorize_email(email, categories) == "Family"
+
+
+def test_categorize_email_substring_not_matched_as_email():
+    """Email keywords are only matched exactly, not as substrings."""
+    categories = {
+        "Family": ["rashna9@gmail.com"],
+    }
+    # Different sender, so exact email match fails
+    email = {"from": "rashna@example.com", "subject": "Hello"}
+    assert categorize_email(email, categories) == "Misc"
+
+
+def test_categorize_email_with_display_name():
+    """Exact email match works even with display name in sender."""
+    categories = {
+        "Family": ["rashna9@gmail.com"],
+    }
+    email = {"from": "Rashna Nine <rashna9@gmail.com>", "subject": "Hi"}
+    assert categorize_email(email, categories) == "Family"
+
+
+def test_categorize_newssummary_example():
+    """NewsSummary with onboarding@resend.dev gets exact match."""
+    categories = {
+        "NewsSummary": ["onboarding@resend.dev"],
+        "Misc": ["resend"],  # Would match as substring
+    }
+    email = {"from": "onboarding@resend.dev", "subject": "Welcome"}
+    assert categorize_email(email, categories) == "NewsSummary"
+
+
 # ── score_email LLM category normalization ───────────────────────────────────
 
 

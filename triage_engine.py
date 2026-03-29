@@ -102,9 +102,12 @@ def match_rule(email, rules):
 # ── Keyword-based categorization ─────────────────────────────────────────────
 
 def categorize_email(email, categories=None):
-    """Categorize an email by matching sender and subject against keyword lists.
+    """Categorize an email by matching sender against keywords in category definitions.
 
-    Checks sender first (exact email matches and keyword substrings), then subject.
+    Matching strategy (strict guardrails):
+    1. Exact email match — if keyword looks like an email (contains @), match exactly against sender's email part
+    2. Substring match — if keyword is not an email, match as substring in sender or subject
+
     Returns the category name or "Misc" if no match.
     """
     if not categories:
@@ -112,13 +115,31 @@ def categorize_email(email, categories=None):
     if not categories:
         return "Misc"
 
-    sender = email.get("from", "").lower()
+    sender_full = email.get("from", "").lower()
     subject = email.get("subject", "").lower()
 
+    # Extract email address from "Name <email@domain>" format, or use full sender if already just email
+    import re
+    match = re.search(r'<([^>]+)>', sender_full)
+    sender_email = match.group(1) if match else sender_full
+
+    # First pass: exact email matches (strict guardrail)
     for category, keywords in categories.items():
         for keyword in keywords:
             kw = keyword.lower()
-            if kw in sender or kw in subject:
+            # If keyword looks like an email, do exact match against sender's email part
+            if "@" in kw and kw == sender_email:
+                return category
+
+    # Second pass: substring keyword matches
+    for category, keywords in categories.items():
+        for keyword in keywords:
+            kw = keyword.lower()
+            # Skip email keywords in substring pass — they were already checked exactly
+            if "@" in kw:
+                continue
+            # Substring match in full sender (name + email) or subject
+            if kw in sender_full or kw in subject:
                 return category
 
     return "Misc"
