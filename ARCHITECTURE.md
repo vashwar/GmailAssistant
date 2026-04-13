@@ -544,35 +544,383 @@ Single-pass tree walk:
 - Extract text and attachments in one traversal
 - Avoid multiple `_walk_payload()` calls per message
 
-## Future Architecture Improvements
+## Future Enhancements
 
-### Potential Enhancements
+### Planned Features (from TODOS.md)
 
-1. **Local LLM Support**
-   - Add Ollama backend option for offline operation
-   - Provider abstraction: `LLMProvider` interface with `GemmaProvider`, `OllamaProvider`
+#### 1. Batch Auto-Reply for Low-Priority Emails (P2)
 
-2. **Email Caching Layer**
-   - SQLite database for offline access
-   - Incremental sync (only fetch new messages)
-   - Reduces Gmail API quota usage
+**What:** Auto-generate replies for all LOW priority emails at once after triage. User reviews all drafts in batch, then approves/rejects each.
 
-3. **Batch LLM Calls**
-   - Send multiple emails in one API call using structured prompts
-   - Reduce latency for large triage operations
+**Why:** Triage identifies low-priority emails, but you still handle each manually. Batch reply converts awareness into time savings.
 
-4. **Async/Concurrent Processing**
-   - `asyncio` for parallel LLM calls during triage
-   - Significant speedup for 50+ email batches
+**Implementation:**
+```python
+# After triage digest display
+def _action_batch_auto_reply(digest):
+    low_emails = digest["groups"]["LOW"]
+    drafts = []
 
-5. **Web UI**
-   - FastAPI backend serving same service modules
-   - React frontend for visual digest/calendar
+    for email in low_emails:
+        reply = generate_auto_reply(email["from"], email["subject"], email["body"])
+        drafts.append((email, reply))
 
-6. **Plugin System**
-   - User-defined triage rules as Python functions
-   - Custom LLM prompt templates
-   - Extensible action menu
+    # Batch review UI
+    for i, (email, reply) in enumerate(drafts):
+        print(f"\n[{i+1}/{len(drafts)}] Reply to: {email['from']}")
+        print(reply)
+        action = input("[S]end / [E]dit / [Skip]: ")
+        # Handle action
+```
+
+**Architecture Impact:**
+- Extends triage_engine with new bulk action
+- Reuses existing `generate_auto_reply()` from llm.py
+- Needs batch review UI similar to compose feedback loop
+- Safety: Individual approval required per reply
+
+**Dependencies:** Smart Triage Engine (already built)
+
+**Effort:** Small (S)
+
+**Risk:** Sending inappropriate auto-replies without careful review. Mitigation: individual approval + clear diff highlighting.
+
+---
+
+#### 2. Smart Follow-Up Detection (P2)
+
+**What:** Scan sent mail for threads where you sent the last message and haven't received a reply in X days (default 3). Surface in triage digest with AI-generated nudge emails.
+
+**Why:** Forgotten follow-ups leak productivity. You lose track of pending responses.
+
+**Implementation:**
+```python
+# New module: followup_detector.py
+def detect_stale_threads(days_threshold=3):
+    """Find threads where user sent last message > threshold days ago."""
+    query = f"in:sent newer_than:{days_threshold}d"
+    sent_messages = search_emails(query)
+
+    stale_threads = []
+    for msg in sent_messages:
+        thread = fetch_thread(msg["threadId"])
+        if is_last_sender_me(thread) and days_since(thread[-1]) > days_threshold:
+            stale_threads.append(thread)
+
+    return stale_threads
+
+def generate_nudge_email(thread):
+    """LLM generates gentle follow-up email based on thread context."""
+    context = "\n".join([msg["body"] for msg in thread[-3:]])  # Last 3 messages
+    prompt = f"""Generate a brief, polite follow-up email for this thread.
+    Context: {context}
+
+    The email should gently check in without being pushy."""
+    return _generate(prompt).text
+```
+
+**Digest Integration:**
+```python
+# In build_digest()
+stale_threads = detect_stale_threads(days_threshold=3)
+digest["followups"] = [
+    {
+        "subject": thread[0]["subject"],
+        "recipient": thread[-1]["to"],
+        "days_ago": days_since(thread[-1]),
+        "nudge_draft": generate_nudge_email(thread)
+    }
+    for thread in stale_threads
+]
+
+# In format_digest() - add new section
+if digest["followups"]:
+    lines.append("  FOLLOW-UPS NEEDED")
+    for f in digest["followups"]:
+        lines.append(f"  * {f['subject']} — to {f['recipient']} ({f['days_ago']} days ago)")
+```
+
+**Architecture Impact:**
+- New module: `followup_detector.py`
+- Extends gmail_service with `fetch_thread()` method
+- New LLM function: `generate_nudge_email()`
+- Integrates into triage digest as new section
+- New action menu option: `[F] Send follow-ups`
+
+**Dependencies:** Smart Triage Engine
+
+**Effort:** Medium → Small with AI assistance
+
+**Gmail API Requirements:**
+- `in:sent` search query
+- Thread fetching (multiple messages in conversation)
+- Date comparison logic
+
+---
+
+### Architectural Improvements
+
+#### 3. Local LLM Support
+
+**Add Ollama backend for offline operation:**
+```python
+# llm.py - Provider abstraction
+class LLMProvider:
+    def generate(self, prompt: str) -> str:
+        raise NotImplementedError
+
+class GemmaCloudProvider(LLMProvider):
+    """Current Google AI API implementation"""
+    def generate(self, prompt):
+        return _model.generate_content(prompt).text
+
+class OllamaProvider(LLMProvider):
+    """Local Ollama implementation"""
+    def __init__(self, model="gemma-4-31b"):
+        self.model = model
+        self.client = ollama.Client()
+
+    def generate(self, prompt):
+        response = self.client.generate(model=self.model, prompt=prompt)
+        return response['response']
+
+# config.py
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "cloud")  # "cloud" or "ollama"
+```
+
+**Benefits:**
+- No API costs
+- No rate limits
+- Offline operation
+- Faster for local models
+
+**Trade-offs:**
+- Requires Ollama installation
+- 31B model needs ~20GB RAM
+- Slower inference than cloud (depends on hardware)
+
+---
+
+#### 4. Email Caching Layer (SQLite)
+
+**Persistent local storage for email data:**
+```python
+# cache.py - New module
+import sqlite3
+from datetime import datetime
+
+class EmailCache:
+    def __init__(self, db_path="emails.db"):
+        self.conn = sqlite3.connect(db_path)
+        self._create_tables()
+
+    def _create_tables(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS emails (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT,
+                sender TEXT,
+                subject TEXT,
+                body TEXT,
+                date DATETIME,
+                priority TEXT,
+                category TEXT,
+                summary TEXT,
+                fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+    def sync_new_emails(self):
+        """Incremental sync: fetch only emails since last sync"""
+        last_sync = self.get_last_sync_time()
+        new_emails = fetch_unread_emails(since=last_sync)
+        self.insert_emails(new_emails)
+
+    def search_local(self, query):
+        """Fast SQL search on cached data"""
+        return self.conn.execute(
+            "SELECT * FROM emails WHERE subject LIKE ? OR body LIKE ?",
+            (f"%{query}%", f"%{query}%")
+        ).fetchall()
+```
+
+**Benefits:**
+- Offline access to historical emails
+- Fast local search (no API calls)
+- Reduced Gmail API quota usage
+- Historical analytics capability
+
+**Integration Points:**
+- `gmail_service.py` checks cache before API call
+- `triage_engine.py` can triage from cache
+- Periodic background sync for new emails
+
+**Storage Requirements:**
+- ~1KB per email (text only)
+- 10,000 emails ≈ 10MB database file
+
+---
+
+#### 5. Async/Concurrent Processing
+
+**Parallel LLM calls for faster triage:**
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+async def score_email_async(email, rules, categories):
+    """Async wrapper around score_email"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, score_email, email, rules, categories
+    )
+
+async def run_triage_async(emails):
+    """Score all emails in parallel"""
+    tasks = [score_email_async(e, rules, categories) for e in emails]
+    return await asyncio.gather(*tasks)
+
+# Usage in triage_engine.py
+scored = asyncio.run(run_triage_async(emails))
+```
+
+**Performance Gains:**
+- 50 emails sequential: ~50 seconds (1 LLM call/sec)
+- 50 emails parallel (10 concurrent): ~5 seconds
+- **10x speedup** for large batches
+
+**Considerations:**
+- LLM API rate limits (Gemma 4 31B: ~60 QPM)
+- Optimal concurrency: 10-20 parallel calls
+- Requires async/await refactoring of service modules
+
+---
+
+#### 6. Batch LLM Calls
+
+**Single API call for multiple emails:**
+```python
+def triage_batch(emails, categories):
+    """Triage multiple emails in one LLM call"""
+    emails_json = json.dumps([
+        {"from": e["from"], "subject": e["subject"], "body": e["body"][:500]}
+        for e in emails
+    ])
+
+    prompt = f"""Analyze these {len(emails)} emails and return a JSON array
+    with triage results for each. Format:
+    [
+      {{"email_index": 0, "summary": "...", "urgency": "high", ...}},
+      {{"email_index": 1, "summary": "...", "urgency": "low", ...}},
+      ...
+    ]
+
+    Emails: {emails_json}
+    """
+
+    response = _generate(prompt)
+    results = _parse_json_response(response.text)
+    return results
+```
+
+**Benefits:**
+- Reduces API calls: 50 emails → 1 call (if fits in context)
+- Lower latency (fewer round-trips)
+- Better cost efficiency
+
+**Trade-offs:**
+- Context window limits (256K tokens ≈ ~100 emails)
+- Harder JSON parsing (larger response)
+- Less granular error handling
+
+---
+
+#### 7. Web UI
+
+**FastAPI backend + React frontend:**
+```
+gmailassistant/
+├── api/
+│   ├── main.py          # FastAPI app
+│   ├── routers/
+│   │   ├── triage.py    # POST /triage
+│   │   ├── compose.py   # POST /compose
+│   │   └── calendar.py  # GET /events
+│   └── models.py        # Pydantic schemas
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── DigestView.tsx
+│   │   │   ├── ComposeModal.tsx
+│   │   │   └── CalendarWidget.tsx
+│   │   └── App.tsx
+│   └── package.json
+└── (existing CLI modules reused as backend services)
+```
+
+**Benefits:**
+- Visual digest with drag-to-trash
+- Rich text editor for compose
+- Calendar integration with timeline view
+- Mobile-friendly responsive design
+
+**Architecture:**
+- Reuse existing service modules (gmail_service, llm, etc.)
+- API layer wraps CLI functions
+- OAuth2 handled server-side
+- WebSocket for real-time updates
+
+---
+
+#### 8. Plugin System
+
+**User-defined triage rules as Python code:**
+```python
+# plugins/custom_rules.py
+from triage_engine import register_rule
+
+@register_rule(priority=1)  # Highest priority
+def vip_sender_rule(email):
+    """Auto-prioritize emails from VIP list"""
+    vips = ["ceo@company.com", "boss@company.com"]
+    if any(vip in email["from"] for vip in vips):
+        return {"priority": "HIGH", "category": "VIP"}
+    return None
+
+@register_rule(priority=10)
+def weekend_demotion(email):
+    """Lower priority for emails sent on weekends"""
+    if is_weekend(email["date"]):
+        return {"priority": "LOW", "category": "Weekend"}
+    return None
+```
+
+**Custom LLM prompts:**
+```python
+# plugins/custom_prompts.py
+CUSTOM_TRIAGE_PROMPT = """You are a senior executive's assistant.
+Analyze emails with extreme attention to financial mentions and deadlines.
+Always escalate anything involving money, contracts, or legal matters to HIGH priority.
+"""
+
+register_prompt("triage", CUSTOM_TRIAGE_PROMPT)
+```
+
+**Benefits:**
+- No code changes to core app
+- User-specific business logic
+- Community plugin sharing
+- A/B test different prompts
+
+**Plugin Discovery:**
+```python
+# config.py
+PLUGINS_DIR = os.getenv("PLUGINS_DIR", "plugins/")
+
+# Load all .py files in plugins/
+for plugin_file in glob(f"{PLUGINS_DIR}/*.py"):
+    importlib.import_module(plugin_file)
+```
 
 ## Deployment & Packaging
 
