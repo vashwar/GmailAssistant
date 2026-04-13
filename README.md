@@ -1,6 +1,6 @@
 # Gmail & Calendar Assistant
 
-A Python CLI tool that acts as an intelligent executive assistant for Gmail and Google Calendar, powered by Google Gemini AI.
+A Python CLI tool that acts as an intelligent executive assistant for Gmail and Google Calendar, powered by Google Gemma 4 31B (free tier with higher rate limits).
 
 ## Features
 
@@ -55,7 +55,7 @@ Two modes:
 - Python 3.9+
 - A Google Cloud project with **Gmail API** and **Google Calendar API** enabled
 - OAuth2 credentials (`credentials.json`) downloaded from Google Cloud Console
-- A [Gemini API key](https://aistudio.google.com/apikey)
+- A [Google AI API key](https://aistudio.google.com/apikey) (works for both Gemini and Gemma models)
 
 ### Installation
 
@@ -71,12 +71,13 @@ pip install -r requirements.txt
 
 2. Create a `.env` file in the project root:
    ```
-   GOOGLE_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-2.0-flash
+   GOOGLE_API_KEY=your_google_api_key_here
+   GEMINI_MODEL=gemma-4-31b-it
    USER_NAME=YourName
    TIMEZONE=America/Los_Angeles
    EMAIL_CATEGORIES={"Jobs": ["linkedin", "recruiter"], "Bills": ["invoice", "payment"], ...}
    ```
+   - `GEMINI_MODEL` — defaults to `gemma-4-31b-it` (free tier, higher rate limits). Can also use `gemini-2.0-flash`, `gemini-3.0-flash`, etc.
    - `USER_NAME` — used for mention detection in email triage (default: `Vashwar`)
    - `TIMEZONE` — sets the calendar timezone (default: `America/Los_Angeles`)
    - `EMAIL_CATEGORIES` — optional JSON dict to override the default 13 categories; if not set, uses built-in categories (Jobs, Academic, Shopping, Grocery, Restaurant, Bills, Travel, Banks/Investment, Social Media, Newsletters, Promotions, Family, NewsSummary)
@@ -140,7 +141,7 @@ GmailAssistant/
 ├── config.py               # Loads .env, constants, EMAIL_CATEGORIES (13 default categories)
 ├── auth.py                 # OAuth2 flow and service builders
 ├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts, labels)
-├── llm.py                  # Gemini AI integration (triage, draft, revise, parse, categorize)
+├── llm.py                  # LLM integration (Gemma 4 31B by default; triage, draft, revise, parse, categorize)
 ├── calendar_service.py     # Google Calendar API operations
 ├── triage_engine.py        # Smart Triage pipeline (keyword categorization, LLM fallback, digest, labeling, deadline picker)
 ├── main.py                 # CLI entry point
@@ -155,7 +156,7 @@ GmailAssistant/
 
 - `google-api-python-client` — Gmail and Calendar API client
 - `google-auth-oauthlib` — OAuth2 authentication
-- `google-generativeai` — Gemini AI SDK
+- `google-generativeai` — Google AI SDK (supports both Gemini and Gemma models)
 - `python-dotenv` — Environment variable loading
 - `python-dateutil` — Date parsing for calendar events
 - `beautifulsoup4` — HTML email body extraction
