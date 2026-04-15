@@ -43,24 +43,32 @@ def retry_with_backoff(max_retries=3, base_delay=1.0, backoff_multiplier=2.0):
 
 
 @retry_with_backoff()
-def _generate(prompt):
+def _generate(prompt, **kwargs):
     """Wrapper around model.generate_content with retry logic."""
-    return _model.generate_content(prompt)
+    return _model.generate_content(prompt, **kwargs)
 
 
 def _parse_json_response(text):
     """Extract JSON from a Gemini response, handling markdown fences."""
-    # Strip markdown code fences if present
-    cleaned = re.sub(r"```(?:json)?\s*", "", text)
+    # Strip markdown code fences if present (using character class to avoid UI breakage)
+    cleaned = re.sub(r"[`]{3}(?:json)?\s*", "", text)
+    cleaned = re.sub(r"[`]{3}\s*", "", cleaned)
     cleaned = cleaned.strip()
+    
+    # Remove trailing commas from objects and arrays (common in Gemma models)
+    cleaned = re.sub(r",\s*([\}\]])", r"\1", cleaned)
+
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         # Try to find JSON object in the text
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if match:
+            extracted = match.group()
+            # Run the trailing comma cleanup again on the extracted portion
+            extracted = re.sub(r",\s*([\}\]])", r"\1", extracted)
             try:
-                return json.loads(match.group())
+                return json.loads(extracted)
             except json.JSONDecodeError:
                 pass
     return None
@@ -89,7 +97,7 @@ Body:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result is None:
@@ -140,7 +148,7 @@ Body:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result is None:
@@ -163,8 +171,7 @@ Return ONLY the JSON object, no other text."""
     }
 
 
-def categorize_email_llm(sender, subject, body, categories, feedback=None,
-                         current_category=None):
+def categorize_email_llm(sender, subject, body, categories, feedback=None, current_category=None):
     """Ask the LLM to categorize a single email into one of the given categories.
 
     Args:
@@ -205,7 +212,7 @@ Return a JSON object with exactly one key:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result and isinstance(result.get("category"), str):
@@ -240,7 +247,7 @@ Return a JSON object with exactly two keys:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result and "subject" in result and "body" in result:
@@ -274,7 +281,7 @@ Return a JSON object with exactly two keys:
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result and "subject" in result and "body" in result:
@@ -324,7 +331,7 @@ Meeting request: {natural_language}
 
 Return ONLY the JSON object, no other text."""
 
-    response = _generate(prompt)
+    response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
     result = _parse_json_response(response.text)
 
     if result is None:
