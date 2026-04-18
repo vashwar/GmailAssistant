@@ -1,6 +1,8 @@
 import os
 import fnmatch
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import yaml
@@ -657,18 +659,17 @@ def run_triage():
     # Pass only the category names (not keywords) to LLM
     category_names = list(yaml_categories.keys()) if yaml_categories else None
 
-    # Score each email with progress indicator
-    scored = []
-    for i, email in enumerate(emails, 1):
-        print(f"  Analyzing {i}/{len(emails)}: {email['subject'][:40]}...", end="\r")
+    # Score emails in parallel for speed
+    scored = [None] * len(emails)
+    completed = [0]  # mutable counter for progress
+    lock = threading.Lock()
+
+    def _score_one(index, email):
         try:
             result = score_email(email, rules, default_category, category_names)
-            scored.append(result)
         except Exception as e:
             logger.warning("Failed to score email %s: %s", email.get("id"), e)
-            print(f"\n  Warning: Could not analyze '{email['subject']}': {e}")
-            # Include with defaults so partial results still show
-            scored.append({
+            result = {
                 **email,
                 "priority": "LOW",
                 "category": default_category,
@@ -676,7 +677,18 @@ def run_triage():
                 "action_required": False,
                 "mentions_user": False,
                 "deadlines": [],
-            })
+            }
+        with lock:
+            completed[0] += 1
+            print(f"  Analyzed {completed[0]}/{len(emails)} emails...", end="\r")
+        return index, result
+
+    max_workers = min(8, len(emails))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_score_one, i, email) for i, email in enumerate(emails)]
+        for future in as_completed(futures):
+            idx, result = future.result()
+            scored[idx] = result
 
     print()  # Clear progress line
 
