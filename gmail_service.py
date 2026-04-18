@@ -220,6 +220,15 @@ def send_email(to, subject, body):
     return sent
 
 
+def mark_as_read(msg_id):
+    """Mark an email as read by removing the UNREAD label."""
+    service = get_gmail_service()
+    service.users().messages().modify(
+        userId="me", id=msg_id,
+        body={"removeLabelIds": ["UNREAD"]},
+    ).execute()
+
+
 def trash_email(msg_id):
     """Move an email to Trash."""
     service = get_gmail_service()

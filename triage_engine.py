@@ -6,7 +6,7 @@ from datetime import datetime
 import yaml
 
 from config import USER_NAME, TIMEZONE, EMAIL_CATEGORIES
-from gmail_service import fetch_unread_emails, trash_email, _format_size, get_or_create_label, apply_label
+from gmail_service import fetch_unread_emails, trash_email, mark_as_read, _format_size, get_or_create_label, apply_label
 from llm import triage_email, generate_auto_reply, categorize_email_llm
 from calendar_service import create_event_from_deadline
 
@@ -459,6 +459,47 @@ def _action_add_deadlines(digest):
     print()
 
 
+def _action_mark_read(number_map):
+    """Mark specific emails as read by number."""
+    print("  Enter email numbers to mark as read (comma-separated, e.g. 1,3,5):")
+    selection = input("  > ").strip()
+    if not selection:
+        return
+    for idx_str in selection.split(","):
+        idx_str = idx_str.strip()
+        if idx_str.isdigit() and int(idx_str) in number_map:
+            email = number_map[int(idx_str)]
+            try:
+                mark_as_read(email["id"])
+                print(f"  Marked as read: {email['subject']}")
+            except Exception as e:
+                print(f"  Failed to mark '{email['subject']}' as read: {e}")
+        else:
+            print(f"  Invalid number: {idx_str}")
+    print()
+
+
+def _action_mark_all_read(number_map):
+    """Mark all emails in the digest as read."""
+    if not number_map:
+        print("  No emails to mark as read.\n")
+        return
+
+    print(f"  This will mark {len(number_map)} email(s) as read.")
+    confirm = input("  Proceed? (Y/N): ").strip().upper()
+    if confirm != "Y":
+        print("  Cancelled.\n")
+        return
+
+    for email in number_map.values():
+        try:
+            mark_as_read(email["id"])
+            print(f"  Marked as read: {email['subject']}")
+        except Exception as e:
+            print(f"  Failed to mark '{email['subject']}' as read: {e}")
+    print()
+
+
 def _action_auto_reply(number_map):
     """Auto-reply to a specific email from the digest."""
     choice = input("  Enter email number to reply to: ").strip()
@@ -650,6 +691,8 @@ def run_triage():
         print("  [R]  Read an email (enter number)")
         print("  [T]  Trash emails (by number)")
         print("  [TL] Trash all LOW priority emails")
+        print("  [M]  Mark emails as read (by number)")
+        print("  [MA] Mark all emails as read")
         print("  [A]  Auto-reply to an email")
         print("  [D]  Add deadlines to calendar")
         print("  [C]  View by category")
@@ -666,6 +709,10 @@ def run_triage():
             _action_trash_specific(number_map)
         elif action == "TL":
             _action_trash_all_low(number_map, digest)
+        elif action == "M":
+            _action_mark_read(number_map)
+        elif action == "MA":
+            _action_mark_all_read(number_map)
         elif action == "A":
             _action_auto_reply(number_map)
         elif action == "D":
