@@ -1,15 +1,13 @@
 import os
 import fnmatch
 import logging
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import yaml
 
 from config import USER_NAME, TIMEZONE, EMAIL_CATEGORIES
 from gmail_service import fetch_unread_emails, trash_email, mark_as_read, _format_size, get_or_create_label, apply_label
-from llm import triage_email, generate_auto_reply, categorize_email_llm
+from llm import triage_email, _rate_limiter, generate_auto_reply, categorize_email_llm
 from calendar_service import create_event_from_deadline
 
 logger = logging.getLogger(__name__)
@@ -160,6 +158,9 @@ def score_email(email, rules, default_category="general", categories=None):
 
     # Keyword-based categorization from EMAIL_CATEGORIES
     keyword_category = categorize_email(email)
+
+    # Rate-limit before LLM call
+    _rate_limiter.wait()
 
     # LLM pass — always run for summary, deadlines, action detection
     llm_result = triage_email(
@@ -637,7 +638,11 @@ def _action_label_by_category(scored_emails, categories=None):
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_triage():
-    """Run the full Smart Triage pipeline: fetch -> score -> digest -> actions."""
+    """Run the full Smart Triage pipeline: fetch -> score -> digest -> actions.
+
+    Emails are downloaded locally first, then scored one at a time with
+    rate limiting (max 15 LLM requests/minute) to avoid API rate limits.
+    """
     count = input("How many unread emails to triage? [50]: ").strip()
     try:
         max_results = int(count) if count else 50
@@ -645,6 +650,7 @@ def run_triage():
         print("Invalid number, using default of 50.")
         max_results = 50
 
+    # Phase 1: Download all emails locally
     print(f"\nFetching up to {max_results} unread emails...")
     emails = fetch_unread_emails(max_results)
 
@@ -652,19 +658,19 @@ def run_triage():
         print("No unread emails found.\n")
         return
 
-    print(f"Found {len(emails)} email(s). Running triage")
+    print(f"Downloaded {len(emails)} email(s) locally.")
 
     # Load rules and categories
     rules, default_category, yaml_categories = load_rules()
-    # Pass only the category names (not keywords) to LLM
     category_names = list(yaml_categories.keys()) if yaml_categories else None
 
-    # Score emails in parallel for speed
-    scored = [None] * len(emails)
-    completed = [0]  # mutable counter for progress
-    lock = threading.Lock()
+    # Phase 2: Score one at a time, rate-limited to 15 req/min
+    print(f"Analyzing {len(emails)} email(s) (rate-limited to 15 req/min)...")
 
-    def _score_one(index, email):
+    scored = []
+    priority_emoji = {"HIGH": "!!", "MEDIUM": "--", "LOW": ".."}
+
+    for i, email in enumerate(emails):
         try:
             result = score_email(email, rules, default_category, category_names)
         except Exception as e:
@@ -678,24 +684,40 @@ def run_triage():
                 "mentions_user": False,
                 "deadlines": [],
             }
-        with lock:
-            completed[0] += 1
-            print(f"  Analyzed {completed[0]}/{len(emails)} emails...", end="\r")
-        return index, result
+        scored.append(result)
 
-    max_workers = min(8, len(emails))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(_score_one, i, email) for i, email in enumerate(emails)]
-        for future in as_completed(futures):
-            idx, result = future.result()
-            scored[idx] = result
+        # Print running summary as each email is processed
+        pri = result.get("priority", "LOW")
+        marker = priority_emoji.get(pri, "..")
+        sender = result.get("from", "")
+        subj = result.get("subject", "(no subject)")
+        if len(subj) > 50:
+            subj = subj[:47] + "..."
+        summary = result.get("summary", "")
+        if len(summary) > 80:
+            summary = summary[:77] + "..."
+        print(f"  [{i + 1}/{len(emails)}] {marker} {pri:<6} {sender}")
+        print(f"         {subj}")
+        if summary:
+            print(f"         -> {summary}")
 
-    print()  # Clear progress line
+    print()
 
-    # Build and display digest
+    # Build digest (for action menu) and full formatted view
     digest = build_digest(scored)
-    digest_text, number_map = format_digest(digest)
-    print(digest_text)
+    _, number_map = format_digest(digest)
+
+    # Print final summary counts
+    high = len(digest["groups"].get("HIGH", []))
+    med = len(digest["groups"].get("MEDIUM", []))
+    low = len(digest["groups"].get("LOW", []))
+    print("=" * 62)
+    print(f"  TRIAGE COMPLETE  —  {len(scored)} emails: {high} HIGH, {med} MEDIUM, {low} LOW")
+    if digest["deadlines"]:
+        print(f"  {len(digest['deadlines'])} deadline(s) detected")
+    if digest["attachments"]:
+        print(f"  {len(digest['attachments'])} attachment(s)")
+    print("=" * 62)
 
     # Action loop
     while True:

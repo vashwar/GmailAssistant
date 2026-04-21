@@ -2,6 +2,7 @@ import json
 import re
 import time
 import logging
+import threading
 from datetime import datetime
 from functools import wraps
 import google.generativeai as genai
@@ -72,6 +73,30 @@ def _parse_json_response(text):
             except json.JSONDecodeError:
                 pass
     return None
+
+
+class RateLimiter:
+    """Token-bucket rate limiter to keep LLM calls under a max requests-per-minute ceiling."""
+
+    def __init__(self, max_per_minute=15):
+        self._interval = 60.0 / max_per_minute  # seconds between requests
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self):
+        """Block until the next request is allowed."""
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._interval:
+                sleep_time = self._interval - elapsed
+                logger.debug("Rate limiter sleeping %.1fs", sleep_time)
+                time.sleep(sleep_time)
+            self._last_call = time.monotonic()
+
+
+# Global rate limiter — shared across all LLM calls in triage batches
+_rate_limiter = RateLimiter(max_per_minute=15)
 
 
 def summarize_email(sender, subject, body, user_name="Vashwar"):
