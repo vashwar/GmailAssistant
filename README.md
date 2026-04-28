@@ -1,11 +1,11 @@
 # Gmail & Calendar Assistant
 
-A Python CLI tool that acts as an intelligent executive assistant for Gmail and Google Calendar, powered by Google Gemma 4 31B (free tier with higher rate limits).
+A Python CLI tool that acts as an intelligent executive assistant for Gmail and Google Calendar, powered by Google Gemini 3.1 Flash Lite (fast, 250K context window).
 
 ## Features
 
 ### 1. Smart Triage (Inbox Briefing)
-- Fetches unread emails and scores them using **configurable YAML rules + AI fallback**
+- Fetches unread emails and scores them in **batches of 20** using **configurable YAML rules + AI fallback** (minimizes API calls)
 - **Email categorization** — automatically sorts emails into 13 categories (Jobs, Bills, Academic, Shopping, Newsletters, etc.) using fast keyword matching; uncategorized emails refined by AI
 - Groups emails into HIGH / MEDIUM / LOW priority in an executive digest
 - Flags emails that mention you by name
@@ -72,12 +72,12 @@ pip install -r requirements.txt
 2. Create a `.env` file in the project root:
    ```
    GOOGLE_API_KEY=your_google_api_key_here
-   GEMINI_MODEL=gemma-4-31b-it
+   GEMINI_MODEL=gemini-3.1-flash-lite-preview
    USER_NAME=YourName
    TIMEZONE=America/Los_Angeles
    EMAIL_CATEGORIES={"Jobs": ["linkedin", "recruiter"], "Bills": ["invoice", "payment"], ...}
    ```
-   - `GEMINI_MODEL` — defaults to `gemma-4-31b-it` (free tier, higher rate limits). Can also use `gemini-2.0-flash`, `gemini-3.0-flash`, etc.
+   - `GEMINI_MODEL` — defaults to `gemini-3.1-flash-lite-preview` (fast, 250K context). Can also use `gemini-2.0-flash`, `gemini-2.5-flash`, etc.
    - `USER_NAME` — used for mention detection in email triage (default: `Vashwar`)
    - `TIMEZONE` — sets the calendar timezone (default: `America/Los_Angeles`)
    - `EMAIL_CATEGORIES` — optional JSON dict to override the default 13 categories; if not set, uses built-in categories (Jobs, Academic, Shopping, Grocery, Restaurant, Bills, Travel, Banks/Investment, Social Media, Newsletters, Promotions, Family, NewsSummary)
@@ -118,7 +118,7 @@ python main.py
 python -m pytest tests/ -v
 ```
 
-66 tests across 4 files covering:
+70 tests across 4 files covering:
 - Triage rules and precedence
 - Email categorization (keyword matching and LLM-based)
 - LLM functions (JSON parsing, retry logic, draft refinement)
@@ -141,7 +141,7 @@ GmailAssistant/
 ├── config.py               # Loads .env, constants, EMAIL_CATEGORIES (13 default categories)
 ├── auth.py                 # OAuth2 flow and service builders
 ├── gmail_service.py        # Gmail API operations (fetch, search, send, trash, contacts, labels)
-├── llm.py                  # LLM integration (Gemma 4 31B by default; triage, draft, revise, parse, categorize)
+├── llm.py                  # LLM integration (Gemini 3.1 Flash Lite; batch triage, draft, revise, parse, categorize)
 ├── calendar_service.py     # Google Calendar API operations
 ├── triage_engine.py        # Smart Triage pipeline (keyword categorization, LLM fallback, digest, labeling, deadline picker)
 ├── main.py                 # CLI entry point

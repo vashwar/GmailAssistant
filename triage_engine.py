@@ -7,7 +7,7 @@ import yaml
 
 from config import USER_NAME, TIMEZONE, EMAIL_CATEGORIES
 from gmail_service import fetch_unread_emails, trash_email, mark_as_read, _format_size, get_or_create_label, apply_label
-from llm import triage_email, _rate_limiter, generate_auto_reply, categorize_email_llm
+from llm import triage_email, triage_emails_batch, BATCH_SIZE, _rate_limiter, generate_auto_reply, categorize_email_llm
 from calendar_service import create_event_from_deadline
 
 logger = logging.getLogger(__name__)
@@ -196,6 +196,64 @@ def score_email(email, rules, default_category="general", categories=None):
         "mentions_user": llm_result.get("mentions_user", False),
         "deadlines": llm_result.get("deadlines", []),
     }
+
+
+def score_emails_batch(emails, rules, default_category="general", categories=None):
+    """Score a batch of emails using a single batched LLM call.
+
+    Applies deterministic rules and keyword categorization per email,
+    then makes one batched LLM call for all emails in the batch.
+    Returns a list of scored email dicts.
+    """
+    if not emails:
+        return []
+
+    # Pre-compute rule and keyword matches for each email
+    rule_results = []
+    for email in emails:
+        rule_priority, rule_category = match_rule(email, rules)
+        keyword_category = categorize_email(email)
+        rule_results.append((rule_priority, rule_category, keyword_category))
+
+    # Single rate-limited batched LLM call
+    _rate_limiter.wait()
+    llm_results = triage_emails_batch(
+        emails, user_name=USER_NAME, categories=categories,
+    )
+
+    # Merge rule-based + LLM results
+    scored = []
+    for i, email in enumerate(emails):
+        rule_priority, rule_category, keyword_category = rule_results[i]
+        llm_result = llm_results[i]
+
+        if rule_priority:
+            priority = rule_priority
+        else:
+            priority = llm_result.get("urgency", "low").upper()
+
+        if rule_category:
+            category = rule_category
+        elif keyword_category != "Misc":
+            category = keyword_category
+        else:
+            llm_category = llm_result.get("category", default_category)
+            if isinstance(llm_category, list):
+                category = llm_category[0] if llm_category else default_category
+            else:
+                category = llm_category
+
+        scored.append({
+            **email,
+            "priority": priority,
+            "category": category,
+            "summary": llm_result.get("summary", ""),
+            "action_required": llm_result.get("action_required", False),
+            "mentions_user": llm_result.get("mentions_user", False),
+            "deadlines": llm_result.get("deadlines", []),
+        })
+
+    return scored
 
 
 # ── Digest building ──────────────────────────────────────────────────────────
@@ -664,42 +722,56 @@ def run_triage():
     rules, default_category, yaml_categories = load_rules()
     category_names = list(yaml_categories.keys()) if yaml_categories else None
 
-    # Phase 2: Score one at a time, rate-limited to 15 req/min
-    print(f"Analyzing {len(emails)} email(s) (rate-limited to 15 req/min)...")
+    # Phase 2: Score in batches (20 emails per API call to minimize requests)
+    num_batches = (len(emails) + BATCH_SIZE - 1) // BATCH_SIZE
+    print(f"Analyzing {len(emails)} email(s) in {num_batches} batch(es) of up to {BATCH_SIZE}...")
 
     scored = []
     priority_emoji = {"HIGH": "!!", "MEDIUM": "--", "LOW": ".."}
 
-    for i, email in enumerate(emails):
-        try:
-            result = score_email(email, rules, default_category, category_names)
-        except Exception as e:
-            logger.warning("Failed to score email %s: %s", email.get("id"), e)
-            result = {
-                **email,
-                "priority": "LOW",
-                "category": default_category,
-                "summary": "(analysis failed)",
-                "action_required": False,
-                "mentions_user": False,
-                "deadlines": [],
-            }
-        scored.append(result)
+    for batch_start in range(0, len(emails), BATCH_SIZE):
+        batch = emails[batch_start:batch_start + BATCH_SIZE]
+        batch_num = batch_start // BATCH_SIZE + 1
+        print(f"\n  Batch {batch_num}/{num_batches} ({len(batch)} emails)...")
 
-        # Print running summary as each email is processed
-        pri = result.get("priority", "LOW")
-        marker = priority_emoji.get(pri, "..")
-        sender = result.get("from", "")
-        subj = result.get("subject", "(no subject)")
-        if len(subj) > 50:
-            subj = subj[:47] + "..."
-        summary = result.get("summary", "")
-        if len(summary) > 80:
-            summary = summary[:77] + "..."
-        print(f"  [{i + 1}/{len(emails)}] {marker} {pri:<6} {sender}")
-        print(f"         {subj}")
-        if summary:
-            print(f"         -> {summary}")
+        try:
+            batch_results = score_emails_batch(batch, rules, default_category, category_names)
+        except Exception as e:
+            logger.warning("Batch %d failed: %s — falling back to individual scoring", batch_num, e)
+            print(f"  Batch failed, scoring individually...")
+            batch_results = []
+            for email in batch:
+                _rate_limiter.wait()
+                try:
+                    result = score_email(email, rules, default_category, category_names)
+                except Exception as e2:
+                    logger.warning("Individual score failed for %s: %s", email.get("id"), e2)
+                    result = {
+                        **email,
+                        "priority": "LOW",
+                        "category": default_category,
+                        "summary": "(analysis failed)",
+                        "action_required": False,
+                        "mentions_user": False,
+                        "deadlines": [],
+                    }
+                batch_results.append(result)
+
+        for j, result in enumerate(batch_results):
+            scored.append(result)
+            idx = batch_start + j
+
+            pri = result.get("priority", "LOW")
+            marker = priority_emoji.get(pri, "..")
+            sender = result.get("from", "")
+            subj = result.get("subject", "(no subject)")
+            if len(subj) > 50:
+                subj = subj[:47] + "..."
+            summary = result.get("summary", "")
+            print(f"  [{idx + 1}/{len(emails)}] {marker} {pri:<6} {sender}")
+            print(f"         {subj}")
+            if summary:
+                print(f"         -> {summary}")
 
     print()
 

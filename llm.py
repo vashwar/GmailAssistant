@@ -196,6 +196,132 @@ Return ONLY the JSON object, no other text."""
     }
 
 
+def _parse_json_array_response(text):
+    """Extract a JSON array from a Gemini response, handling markdown fences."""
+    cleaned = re.sub(r"[`]{3}(?:json)?\s*", "", text)
+    cleaned = re.sub(r"[`]{3}\s*", "", cleaned)
+    cleaned = cleaned.strip()
+    cleaned = re.sub(r",\s*([\}\]])", r"\1", cleaned)
+
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find outermost JSON array
+    match = re.search(r"\[.*\]", cleaned, re.DOTALL)
+    if match:
+        extracted = re.sub(r",\s*([\}\]])", r"\1", match.group())
+        try:
+            parsed = json.loads(extracted)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+BATCH_SIZE = 20
+
+
+def triage_emails_batch(emails, user_name="Vashwar", categories=None):
+    """Triage multiple emails in a single LLM call.
+
+    Args:
+        emails: List of email dicts, each with 'from', 'subject', 'body' keys.
+        user_name: User name for mentions detection.
+        categories: Optional list of category names.
+
+    Returns a list of triage result dicts (same keys as triage_email()),
+    one per input email in the same order. Falls back to individual
+    triage_email() calls if batch parsing fails.
+    """
+    if not emails:
+        return []
+
+    if categories:
+        cat_instruction = f'- "category": one of {json.dumps(categories)}'
+    else:
+        cat_instruction = '- "category": a short label that best describes this email (e.g. "work", "newsletter", "finance")'
+
+    # Build numbered email list
+    email_blocks = []
+    for idx, email in enumerate(emails, 1):
+        body = email.get("body", "")
+        truncated_body = body[:4000] if len(body) > 4000 else body
+        email_blocks.append(
+            f"--- Email {idx} ---\n"
+            f"From: {email.get('from', '')}\n"
+            f"Subject: {email.get('subject', '')}\n"
+            f"Body:\n{truncated_body}"
+        )
+
+    emails_text = "\n\n".join(email_blocks)
+
+    prompt = f"""Analyze each of the following {len(emails)} emails and return a JSON **array** of {len(emails)} result objects, one per email in the same order.
+
+Each result object must have exactly these keys:
+- "summary": a concise 1-2 sentence summary
+- "mentions_user": true if the email specifically mentions or addresses "{user_name}" by name, false otherwise
+- "urgency": one of "high", "medium", or "low"
+{cat_instruction}
+- "action_required": true if this email requires a response or action from the recipient, false otherwise
+- "deadlines": a list of deadline strings found in the email (empty list if none)
+
+Do NOT invent dates, names, or deadlines that are not explicitly in the emails.
+
+{emails_text}
+
+Return ONLY the JSON array of {len(emails)} objects, no other text."""
+
+    try:
+        response = _generate(prompt, generation_config={"response_mime_type": "application/json"})
+        results = _parse_json_array_response(response.text)
+
+        if results is not None and len(results) == len(emails):
+            normalized = []
+            for r in results:
+                if not isinstance(r, dict):
+                    raise ValueError("Non-dict entry in batch response")
+                normalized.append({
+                    "summary": r.get("summary", "No summary available"),
+                    "mentions_user": r.get("mentions_user", False),
+                    "urgency": r.get("urgency", "low").lower() if isinstance(r.get("urgency"), str) else "low",
+                    "category": r.get("category", "uncategorized"),
+                    "action_required": r.get("action_required", False),
+                    "deadlines": r.get("deadlines", []),
+                })
+            return normalized
+    except Exception as e:
+        logger.warning("Batch triage failed (%s), falling back to individual calls", e)
+
+    # Fallback: individual calls
+    logger.info("Falling back to individual triage_email() calls for %d emails", len(emails))
+    fallback_default = {
+        "summary": "(analysis failed)",
+        "mentions_user": False,
+        "urgency": "low",
+        "category": "uncategorized",
+        "action_required": False,
+        "deadlines": [],
+    }
+    results = []
+    for email in emails:
+        _rate_limiter.wait()
+        try:
+            results.append(triage_email(
+                email.get("from", ""), email.get("subject", ""), email.get("body", ""),
+                user_name=user_name, categories=categories,
+            ))
+        except Exception as e:
+            logger.warning("Individual triage also failed for '%s': %s",
+                           email.get("subject", "")[:50], e)
+            results.append(fallback_default)
+    return results
+
+
 def categorize_email_llm(sender, subject, body, categories, feedback=None, current_category=None):
     """Ask the LLM to categorize a single email into one of the given categories.
 

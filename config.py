@@ -16,7 +16,7 @@ SCOPES = [
 
 # Gemini / LLM
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
 
 # Email categorization rules — keywords matched case-insensitively against sender and subject.
 # Emails that don't match any category go to "Misc".
