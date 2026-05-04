@@ -371,11 +371,39 @@ Return ONLY the JSON object, no other text."""
     return "Misc"
 
 
-def refine_draft(rough_text, recipient, subject, tone="Professional"):
+def refine_draft(rough_text, recipient, subject, tone="Professional",
+                  reply_context=None, user_name=None):
     """Refine a rough draft into a professional email.
+
+    Args:
+        rough_text: The user's rough draft text.
+        recipient: Recipient email address.
+        subject: Email subject line.
+        tone: Writing tone string.
+        reply_context: Optional dict with 'sender_name', 'subject', 'body' from
+                       the original email being replied to.
+        user_name: Optional user name for sign-off (e.g. "Vashwar").
 
     Returns a dict with 'subject' (refined) and 'body' (refined).
     """
+    reply_block = ""
+    if reply_context:
+        orig_body = reply_context.get("body", "")[:2000]
+        sender_name = reply_context.get("sender_name", "")
+        reply_block = f"""
+This is a REPLY to the following email:
+From: {sender_name}
+Subject: {reply_context.get('subject', '')}
+Body:
+{orig_body}
+
+IMPORTANT reply rules:
+- Address the sender as {sender_name} (use their real name, NOT a placeholder).
+- This is a REPLY — do NOT use placeholder brackets like [Name] or [Sender Name] anywhere.
+"""
+        if user_name:
+            reply_block += f"- Sign off with: Thanks,\\n{user_name}\n"
+
     prompt = f"""You are an expert executive assistant and professional copywriter. Your task is to take a rough draft or bullet points and transform them into a polished, clear, and highly effective email.
 
 Here are your strict guidelines:
@@ -384,7 +412,7 @@ Here are your strict guidelines:
 3. Be Concise: Respect the recipient's time. Eliminate fluff, repetitive phrasing, and unnecessary pleasantries. Get straight to the point.
 4. Tone: Adjust the writing to match the requested tone: {tone}.
 5. Grammar & Flow: Fix all typos, grammatical errors, and awkward phrasing. Ensure smooth transitions between ideas.
-
+{reply_block}
 Please refine the following draft AND improve the subject line:
 
 Original Subject: {subject}
@@ -408,18 +436,39 @@ Return ONLY the JSON object, no other text."""
     return {"subject": subject, "body": response.text.strip()}
 
 
-def revise_draft(current_subject, current_body, feedback, tone="Professional"):
+def revise_draft(current_subject, current_body, feedback, tone="Professional",
+                 reply_context=None, user_name=None):
     """Revise an already-refined email based on user feedback.
+
+    Args:
+        current_subject: Current email subject.
+        current_body: Current email body.
+        feedback: User's revision feedback.
+        tone: Writing tone string.
+        reply_context: Optional dict with 'sender_name', 'subject', 'body' from
+                       the original email being replied to.
+        user_name: Optional user name for sign-off.
 
     Returns a dict with 'subject' and 'body'.
     """
+    reply_block = ""
+    if reply_context:
+        sender_name = reply_context.get("sender_name", "")
+        reply_block = f"""
+This is a REPLY to an email from {sender_name}.
+IMPORTANT: Address the sender as {sender_name} (use their real name, NOT a placeholder).
+Do NOT use placeholder brackets like [Name] or [Sender Name] anywhere.
+"""
+        if user_name:
+            reply_block += f"Sign off with: Thanks,\\n{user_name}\n"
+
     prompt = f"""You are an expert executive assistant and professional copywriter. A user has reviewed a refined email draft and wants changes.
 
 Apply the user's feedback to revise the email. Follow these rules:
 1. Only change what the feedback asks for — keep everything else intact.
 2. No Hallucinations: NEVER invent dates, metrics, names, or commitments not in the current draft or feedback.
 3. Maintain the requested tone: {tone}.
-
+{reply_block}
 Current Subject: {current_subject}
 Current Body:
 {current_body}
@@ -441,15 +490,26 @@ Return ONLY the JSON object, no other text."""
     return {"subject": current_subject, "body": response.text.strip()}
 
 
-def generate_auto_reply(sender, subject, body):
+def generate_auto_reply(sender, subject, body, user_name=None):
     """Generate an appropriate auto-reply to an email.
+
+    Args:
+        sender: Email sender string (e.g. "John Doe <john@example.com>").
+        subject: Email subject.
+        body: Email body text.
+        user_name: Optional user name for sign-off.
 
     Returns the reply body as a string.
     """
     truncated_body = body[:4000] if len(body) > 4000 else body
 
+    sign_off = ""
+    if user_name:
+        sign_off = f"\nSign off the reply with: Thanks,\\n{user_name}"
+
     prompt = f"""You are an email assistant. Generate a brief, professional reply to this email.
 The reply should acknowledge the email and provide an appropriate response.
+Do NOT use placeholder brackets like [Name] or [Your Name] anywhere.{sign_off}
 
 From: {sender}
 Subject: {subject}

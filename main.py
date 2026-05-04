@@ -4,6 +4,7 @@ from gmail_service import fetch_unread_emails, search_emails, get_email_by_id, s
 from llm import refine_draft, revise_draft, generate_auto_reply, parse_meeting_request
 from calendar_service import get_todays_events, get_weeks_events, create_event
 from triage_engine import run_triage
+from config import USER_NAME
 
 MENU = """
 +---------------------------------------+
@@ -114,7 +115,7 @@ def _pick_recipient():
     return None
 
 
-def _draft_and_send(to, subject, tone, send_fn):
+def _draft_and_send(to, subject, tone, send_fn, reply_context=None, user_name=None):
     """Shared draft/refine/send loop used by both new email and reply flows.
 
     Args:
@@ -123,6 +124,9 @@ def _draft_and_send(to, subject, tone, send_fn):
         tone: Writing tone string.
         send_fn: Callable(refined_subject, refined_body) that sends the message
                  and returns the API result dict.
+        reply_context: Optional dict with 'sender_name', 'subject', 'body' from
+                       the original email being replied to.
+        user_name: Optional user name for sign-off in replies.
     """
     print("Enter your rough draft (type END on a new line to finish):")
     lines = []
@@ -138,7 +142,8 @@ def _draft_and_send(to, subject, tone, send_fn):
         return
 
     print("\nRefining your draft with AI...")
-    refined = refine_draft(rough_text, to, subject, tone)
+    refined = refine_draft(rough_text, to, subject, tone,
+                           reply_context=reply_context, user_name=user_name)
     refined_subject = refined["subject"]
     refined_body = refined["body"]
 
@@ -166,7 +171,8 @@ def _draft_and_send(to, subject, tone, send_fn):
                 print("No feedback provided. Keeping current draft.\n")
                 continue
             print("\nRevising draft...")
-            revised = revise_draft(refined_subject, refined_body, feedback, tone)
+            revised = revise_draft(refined_subject, refined_body, feedback, tone,
+                                   reply_context=reply_context, user_name=user_name)
             refined_subject = revised["subject"]
             refined_body = revised["body"]
 
@@ -283,16 +289,25 @@ def _compose_reply():
 
     # Step 3: Draft and send reply using shared flow
     to = email["from"]
+    # Extract sender display name (e.g. "John Doe <john@example.com>" → "John Doe")
+    sender_name = to.split("<")[0].strip().strip('"') if "<" in to else to.split("@")[0]
     if "<" in to:
         to = to.split("<")[1].rstrip(">")
     subject = email["subject"] if email["subject"].lower().startswith("re:") else f"Re: {email['subject']}"
 
     tone = _pick_tone()
 
+    reply_context = {
+        "sender_name": sender_name,
+        "subject": email["subject"],
+        "body": email["body"],
+    }
+
     def send_as_reply(refined_subject, refined_body):
         return send_reply(email["id"], to, refined_subject, refined_body, email["threadId"])
 
-    _draft_and_send(to, subject, tone, send_as_reply)
+    _draft_and_send(to, subject, tone, send_as_reply,
+                    reply_context=reply_context, user_name=USER_NAME)
 
 
 def option_compose_email():
@@ -341,7 +356,8 @@ def option_auto_reply():
 
     email = emails[idx]
     print(f"\nGenerating reply to: {email['subject']}...")
-    reply_body = generate_auto_reply(email["from"], email["subject"], email["body"])
+    reply_body = generate_auto_reply(email["from"], email["subject"], email["body"],
+                                     user_name=USER_NAME)
 
     print(f"\n{'='*60}")
     print(f"Reply to: {email['from']}")
