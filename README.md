@@ -72,12 +72,12 @@ pip install -r requirements.txt
 2. Create a `.env` file in the project root:
    ```
    GOOGLE_API_KEY=your_google_api_key_here
-   GEMINI_MODEL=gemini-3.1-flash-lite-preview
+   GEMINI_MODEL=gemini-3.1-flash-lite
    USER_NAME=YourName
    TIMEZONE=America/Los_Angeles
    EMAIL_CATEGORIES={"Jobs": ["linkedin", "recruiter"], "Bills": ["invoice", "payment"], ...}
    ```
-   - `GEMINI_MODEL` — defaults to `gemini-3.1-flash-lite-preview` (fast, 250K context). Can also use `gemini-2.0-flash`, `gemini-2.5-flash`, etc.
+   - `GEMINI_MODEL` — defaults to `gemini-3.1-flash-lite` (fast, 250K context). Can also use `gemini-2.0-flash`, `gemini-2.5-flash`, etc.
    - `USER_NAME` — used for mention detection in email triage (default: `Vashwar`)
    - `TIMEZONE` — sets the calendar timezone (default: `America/Los_Angeles`)
    - `EMAIL_CATEGORIES` — optional JSON dict to override the default 13 categories; if not set, uses built-in categories (Jobs, Academic, Shopping, Grocery, Restaurant, Bills, Travel, Banks/Investment, Social Media, Newsletters, Promotions, Family, NewsSummary)
