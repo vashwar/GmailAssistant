@@ -457,6 +457,12 @@ def option_schedule_meeting():
             add_meet_link=meet_link,
         )
         print(f"\nEvent created: {created.get('htmlLink', '')}")
+        created_attendees = created.get("attendees", [])
+        if created_attendees:
+            print(f"Invites sent to: {', '.join(a['email'] for a in created_attendees)}")
+        elif attendees:
+            print("WARNING: Attendees were requested but not included in the created event.")
+            print("You may need to re-authenticate: delete credentials/token.json and restart.")
         if meet_link and "conferenceData" in created:
             entry_points = created["conferenceData"].get("entryPoints", [])
             for ep in entry_points:

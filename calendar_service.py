@@ -80,10 +80,12 @@ def create_event(summary, start, end, attendees=None, add_meet_link=False):
         }
 
     conference_version = 1 if add_meet_link else 0
+    send_updates = "all" if attendees else "none"
     created = service.events().insert(
         calendarId="primary",
         body=event_body,
         conferenceDataVersion=conference_version,
+        sendUpdates=send_updates,
     ).execute()
 
     return created

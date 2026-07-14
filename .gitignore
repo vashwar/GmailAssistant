@@ -1,13 +1,27 @@
 # Claude Code
 CLAUDE.md
+.claude/
 
 # Private working docs
 TODOproduct.md
+PRODUCT.md
 
 # Credentials & secrets
 credentials/
 .env
+.env.*
 token.json
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+apikey.txt
+*_tokens.json
+*_credentials.json
+service-account*.json
+secrets.yaml
+secrets.json
 
 # Python
 __pycache__/
@@ -25,8 +39,10 @@ env/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 Thumbs.db
 Desktop.ini
 .DS_Store
+nul
